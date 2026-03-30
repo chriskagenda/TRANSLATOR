@@ -185,6 +185,12 @@ def translate_to_english(text: str, top_k: int = 3) -> dict:
     }
 
 
+def get_index_and_model():
+    """Expose loaded index and model for batch operations."""
+    _load()
+    return _index, _model
+
+
 def spellcheck(text: str) -> list:
     """
     Check each word in the Lunyoro/Rutooro text against the dictionary.
