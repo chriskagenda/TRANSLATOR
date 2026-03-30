@@ -7,7 +7,7 @@ venv/
 .venv/
 
 # Model files (large, regenerate with train.py)
-lunyoro-translator/backend/model/
+# lunyoro-translator/backend/model/
 lunyoro-translator/backend/history.json
 
 # Node
