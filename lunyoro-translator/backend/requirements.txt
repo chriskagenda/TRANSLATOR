@@ -8,6 +8,7 @@ transformers>=4.41.0
 datasets>=2.19.0
 sacrebleu>=2.4.0
 sentencepiece>=0.2.0
+sacremoses>=0.1.1
 python-dotenv>=1.0.1
 pydantic>=2.7.1
 rapidfuzz>=3.9.1

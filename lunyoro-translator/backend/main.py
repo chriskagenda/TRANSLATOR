@@ -13,8 +13,12 @@ app = FastAPI(title="Lunyoro/Rutooro Translator API")
 
 @app.on_event("startup")
 def preload_model():
-    """Load model into memory at startup so first translation is instant."""
+    """Load retrieval index and neural MT models at startup."""
     get_index_and_model()
+    # preload fine-tuned MT models so first request is instant
+    from translate import _load_mt
+    _load_mt("en2lun")
+    _load_mt("lun2en")
 
 app.add_middleware(
     CORSMiddleware,

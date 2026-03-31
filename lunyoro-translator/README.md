@@ -45,7 +45,11 @@ The fine-tuned models are stored in `backend/model/` via Git LFS — no training
 | `en2lun` | English → Lunyoro/Rutooro | 10 | 2.12 |
 | `lun2en` | Lunyoro/Rutooro → English | 10 | 2.12 |
 
-To retrain from scratch:
+## Notes for other machines
+
+- GPU (NVIDIA CUDA): translations run instantly, models load in ~5 seconds on startup
+- CPU only: translations take ~3-5 seconds each, startup takes ~30 seconds — still works fine
+- Git LFS must be installed before cloning, otherwise model files will be empty pointers
 ```bash
 python prepare_training_data.py
 python fine_tune.py --direction both --epochs 10 --batch_size 32
