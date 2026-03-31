@@ -6,8 +6,7 @@ __pycache__/
 venv/
 .venv/
 
-# Model files (large binaries — regenerate with train.py / fine_tune.py)
-lunyoro-translator/backend/model/
+# Model files (large binaries tracked via Git LFS)
 lunyoro-translator/backend/data/cleaned/
 lunyoro-translator/backend/data/training/
 lunyoro-translator/backend/history.json
