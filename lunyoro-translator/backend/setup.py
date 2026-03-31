@@ -4,7 +4,7 @@ Run this after cloning the repo:
     python setup.py
 
 It will:
-  1. Install all Python dependencies
+  1. Install all Python dependencies (CUDA torch if GPU detected, CPU otherwise)
   2. Verify the fine-tuned models are present (pulled via Git LFS)
   3. Verify the translation index exists
   4. Print instructions to start the app
@@ -28,18 +28,46 @@ def check_file(path, label):
     if os.path.exists(path) and os.path.getsize(path) > 1000:
         print(f"  ✓ {label}")
         return True
-    print(f"  ✗ {label} — NOT FOUND or empty")
+    print(f"  ✗ {label} — NOT FOUND or empty (run: git lfs pull)")
     return False
+
+
+def detect_cuda():
+    """Check if an NVIDIA GPU is available via nvidia-smi."""
+    result = subprocess.run("nvidia-smi", shell=True, capture_output=True)
+    return result.returncode == 0
 
 
 print("=" * 60)
 print("Lunyoro / Rutooro Translator — Setup")
 print("=" * 60)
 
-# 1. Install dependencies
-run(f"{sys.executable} -m pip install -r requirements.txt")
+# 1. Install base dependencies (everything except torch)
+run(f"{sys.executable} -m pip install fastapi uvicorn pandas scikit-learn "
+    f"sentence-transformers transformers datasets sacrebleu sentencepiece "
+    f"sacremoses python-dotenv pydantic rapidfuzz pypdf2 python-multipart")
 
-# 2. Check model files
+# 2. Install correct torch build
+if detect_cuda():
+    print("\n✓ NVIDIA GPU detected — installing CUDA torch (cu124)...")
+    run(f"{sys.executable} -m pip install torch torchvision torchaudio "
+        f"--index-url https://download.pytorch.org/whl/cu124")
+else:
+    print("\n  No GPU detected — installing CPU torch...")
+    run(f"{sys.executable} -m pip install torch torchvision torchaudio")
+
+# 3. Verify GPU is usable after install
+try:
+    import torch
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            print(f"  ✓ GPU {i}: {torch.cuda.get_device_name(i)}")
+    else:
+        print("  Running on CPU")
+except Exception:
+    pass
+
+# 4. Check model files
 print("\nChecking model files...")
 all_ok = True
 all_ok &= check_file(os.path.join(BASE, "model", "en2lun", "model.safetensors"), "en2lun model")
