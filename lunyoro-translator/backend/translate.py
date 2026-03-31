@@ -1,8 +1,7 @@
 """
 Translation logic:
-1. Exact match lookup in sentence pairs
-2. Semantic similarity search (embeddings)
-3. Word-level dictionary lookup fallback
+  Primary  — fine-tuned MarianMT models (en2lun / lun2en) when available
+  Fallback — semantic similarity retrieval + dictionary lookup
 """
 import os
 import pickle
@@ -12,72 +11,171 @@ from rapidfuzz import fuzz, process
 from preprocess import load_dictionary
 
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "model", "translation_index.pkl")
+MODEL_DIR  = os.path.join(os.path.dirname(__file__), "model")
 
-_index = None
-_model = None
+# ── cached singletons ────────────────────────────────────────────────────────
+_index      = None
+_sem_model  = None
 _dictionary = None
 
+_mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
+_mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
 
-def _load():
-    global _index, _model, _dictionary
-    if _index is None:
-        if not os.path.exists(INDEX_PATH):
-            raise FileNotFoundError("Translation index not found. Run train.py first.")
-        with open(INDEX_PATH, "rb") as f:
-            _index = pickle.load(f)
-        _model = SentenceTransformer(_index["model_name"])
-        _dictionary = _index["dictionary"]
 
+# ── loaders ──────────────────────────────────────────────────────────────────
+
+def _load_retrieval():
+    global _index, _sem_model, _dictionary
+    if _index is not None:
+        return
+    if not os.path.exists(INDEX_PATH):
+        raise FileNotFoundError("Translation index not found. Run train.py first.")
+    with open(INDEX_PATH, "rb") as f:
+        _index = pickle.load(f)
+    _sem_model  = SentenceTransformer(_index["model_name"])
+    _dictionary = _index["dictionary"]
+
+
+def _load_mt(direction: str):
+    """Lazy-load a fine-tuned MarianMT model. Returns True if available."""
+    if direction in _mt_available:
+        return _mt_available[direction]
+
+    path = os.path.join(MODEL_DIR, direction)
+    if not os.path.isdir(path):
+        _mt_available[direction] = False
+        return False
+
+    try:
+        from transformers import MarianMTModel, MarianTokenizer
+        import torch
+        tokenizer = MarianTokenizer.from_pretrained(path)
+        model     = MarianMTModel.from_pretrained(path)
+        model.eval()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        _mt_models[direction]    = (tokenizer, model, device)
+        _mt_available[direction] = True
+        print(f"[translate] Loaded fine-tuned model: {direction}")
+        return True
+    except Exception as e:
+        print(f"[translate] Could not load {direction} model: {e}")
+        _mt_available[direction] = False
+        return False
+
+
+def _mt_translate(text: str, direction: str) -> str | None:
+    """Run inference with a fine-tuned MarianMT model."""
+    if not _load_mt(direction):
+        return None
+    import torch
+    tokenizer, model, device = _mt_models[direction]
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(device)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            num_beams=4,
+            max_length=256,
+            early_stopping=True,
+        )
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+
+# ── public API ───────────────────────────────────────────────────────────────
 
 def translate(text: str, top_k: int = 3) -> dict:
-    _load()
+    """English → Lunyoro/Rutooro"""
     text = text.strip()
 
-    # 1. Exact match
+    # 1. Fine-tuned model (best quality)
+    mt_result = _mt_translate(text, "en2lun")
+    if mt_result:
+        return {
+            "translation": mt_result,
+            "method":      "neural_mt",
+            "confidence":  1.0,
+            "alternatives": [],
+        }
+
+    # 2. Retrieval fallback
+    _load_retrieval()
+    english_sentences  = _index["english_sentences"]
+    lunyoro_sentences  = _index["lunyoro_sentences"]
+
+    # exact match
+    lower = text.lower()
+    for i, sent in enumerate(english_sentences):
+        if sent.lower() == lower:
+            return {"translation": lunyoro_sentences[i], "method": "exact_match",
+                    "confidence": 1.0, "alternatives": []}
+
+    # semantic similarity
+    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    scores  = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
+    top_idx = np.argsort(scores)[::-1][:top_k]
+    best, best_score = top_idx[0], float(scores[top_idx[0]])
+
+    alternatives = [{"english": english_sentences[i], "lunyoro": lunyoro_sentences[i],
+                     "score": round(float(scores[i]), 3)} for i in top_idx[1:]]
+
+    if best_score > 0.5:
+        return {"translation": lunyoro_sentences[best], "method": "semantic_match",
+                "confidence": round(best_score, 3),
+                "matched_english": english_sentences[best], "alternatives": alternatives}
+
+    # 3. Dictionary fallback
+    return _dict_fallback(text, best_score, english_sentences[best], alternatives, "en→lun")
+
+
+def translate_to_english(text: str, top_k: int = 3) -> dict:
+    """Lunyoro/Rutooro → English"""
+    text = text.strip()
+
+    # 1. Fine-tuned model
+    mt_result = _mt_translate(text, "lun2en")
+    if mt_result:
+        return {
+            "translation": mt_result,
+            "method":      "neural_mt",
+            "confidence":  1.0,
+            "alternatives": [],
+        }
+
+    # 2. Retrieval fallback
+    _load_retrieval()
     english_sentences = _index["english_sentences"]
     lunyoro_sentences = _index["lunyoro_sentences"]
 
-    lower_text = text.lower()
-    for i, sent in enumerate(english_sentences):
-        if sent.lower() == lower_text:
-            return {
-                "translation": lunyoro_sentences[i],
-                "method": "exact_match",
-                "confidence": 1.0,
-                "alternatives": [],
-            }
+    lower = text.lower()
+    for i, sent in enumerate(lunyoro_sentences):
+        if sent.lower() == lower:
+            return {"translation": english_sentences[i], "method": "exact_match",
+                    "confidence": 1.0, "alternatives": []}
 
-    # 2. Semantic similarity
-    query_embedding = _model.encode(text, convert_to_tensor=True)
-    corpus_embeddings = _index["embeddings"]
+    if "lunyoro_embeddings" not in _index:
+        _index["lunyoro_embeddings"] = _sem_model.encode(
+            lunyoro_sentences, show_progress_bar=False, batch_size=64
+        )
 
-    scores = util.cos_sim(query_embedding, corpus_embeddings)[0].numpy()
-    top_indices = np.argsort(scores)[::-1][:top_k]
+    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    scores  = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
+    top_idx = np.argsort(scores)[::-1][:top_k]
+    best, best_score = top_idx[0], float(scores[top_idx[0]])
 
-    best_idx = top_indices[0]
-    best_score = float(scores[best_idx])
+    alternatives = [{"lunyoro": lunyoro_sentences[i], "english": english_sentences[i],
+                     "score": round(float(scores[i]), 3)} for i in top_idx[1:]]
 
-    alternatives = [
-        {
-            "english": english_sentences[i],
-            "lunyoro": lunyoro_sentences[i],
-            "score": round(float(scores[i]), 3),
-        }
-        for i in top_indices[1:]
-    ]
-
-    # if confidence is reasonable, return semantic match
     if best_score > 0.5:
-        return {
-            "translation": lunyoro_sentences[best_idx],
-            "method": "semantic_match",
-            "confidence": round(best_score, 3),
-            "matched_english": english_sentences[best_idx],
-            "alternatives": alternatives,
-        }
+        return {"translation": english_sentences[best], "method": "semantic_match",
+                "confidence": round(best_score, 3),
+                "matched_lunyoro": lunyoro_sentences[best], "alternatives": alternatives}
 
-    # 3. Dictionary word lookup fallback
-    words = text.lower().split()
+    return _dict_fallback_reverse(text, best_score, lunyoro_sentences[best], alternatives)
+
+
+def _dict_fallback(text, best_score, matched_english, alternatives, direction):
+    _load_retrieval()
+    words      = text.lower().split()
     dict_words = [d["word"] for d in _dictionary]
     found = []
     for word in words:
@@ -87,20 +185,32 @@ def translate(text: str, top_k: int = 3) -> dict:
             if entry:
                 found.append({"english_word": word, "lunyoro_word": entry["word"],
                                "definition": entry.get("definitionNative", "")})
+    return {"translation": None, "method": "dictionary_fallback",
+            "confidence": round(best_score, 3), "matched_english": matched_english,
+            "alternatives": alternatives, "dictionary_matches": found,
+            "message": "No close translation found. Showing closest matches."}
 
-    return {
-        "translation": None,
-        "method": "dictionary_fallback",
-        "confidence": round(best_score, 3),
-        "matched_english": english_sentences[best_idx],
-        "alternatives": alternatives,
-        "dictionary_matches": found,
-        "message": "No close translation found. Showing closest matches.",
-    }
+
+def _dict_fallback_reverse(text, best_score, matched_lunyoro, alternatives):
+    _load_retrieval()
+    words      = text.lower().split()
+    dict_words = [d["word"] for d in _dictionary]
+    found = []
+    for word in words:
+        match = process.extractOne(word, dict_words, scorer=fuzz.ratio, score_cutoff=75)
+        if match:
+            entry = next((d for d in _dictionary if d["word"] == match[0]), None)
+            if entry and entry.get("definitionEnglish"):
+                found.append({"lunyoro_word": entry["word"],
+                               "english_definition": entry["definitionEnglish"]})
+    return {"translation": None, "method": "dictionary_fallback",
+            "confidence": round(best_score, 3), "matched_lunyoro": matched_lunyoro,
+            "alternatives": alternatives, "dictionary_matches": found,
+            "message": "No close translation found. Showing closest matches."}
 
 
 def lookup_word(word: str) -> list:
-    _load()
+    _load_retrieval()
     word_lower = word.lower()
     results = []
     for entry in _dictionary:
@@ -109,97 +219,14 @@ def lookup_word(word: str) -> list:
     return results[:5]
 
 
-def translate_to_english(text: str, top_k: int = 3) -> dict:
-    """Reverse translation: Lunyoro/Rutooro → English"""
-    _load()
-    text = text.strip()
-
-    english_sentences = _index["english_sentences"]
-    lunyoro_sentences = _index["lunyoro_sentences"]
-
-    # 1. Exact match in lunyoro sentences
-    lower_text = text.lower()
-    for i, sent in enumerate(lunyoro_sentences):
-        if sent.lower() == lower_text:
-            return {
-                "translation": english_sentences[i],
-                "method": "exact_match",
-                "confidence": 1.0,
-                "alternatives": [],
-            }
-
-    # 2. Semantic similarity against lunyoro corpus
-    if "lunyoro_embeddings" not in _index:
-        # build lunyoro embeddings on first reverse call and cache in memory
-        _index["lunyoro_embeddings"] = _model.encode(lunyoro_sentences, show_progress_bar=False, batch_size=64)
-
-    query_embedding = _model.encode(text, convert_to_tensor=True)
-    lunyoro_embeddings = _index["lunyoro_embeddings"]
-
-    scores = util.cos_sim(query_embedding, lunyoro_embeddings)[0].numpy()
-    top_indices = np.argsort(scores)[::-1][:top_k]
-
-    best_idx = top_indices[0]
-    best_score = float(scores[best_idx])
-
-    alternatives = [
-        {
-            "lunyoro": lunyoro_sentences[i],
-            "english": english_sentences[i],
-            "score": round(float(scores[i]), 3),
-        }
-        for i in top_indices[1:]
-    ]
-
-    if best_score > 0.5:
-        return {
-            "translation": english_sentences[best_idx],
-            "method": "semantic_match",
-            "confidence": round(best_score, 3),
-            "matched_lunyoro": lunyoro_sentences[best_idx],
-            "alternatives": alternatives,
-        }
-
-    # 3. Dictionary fallback — match against lunyoro words
-    words = text.lower().split()
-    dict_words = [d["word"] for d in _dictionary]
-    found = []
-    for word in words:
-        match = process.extractOne(word, dict_words, scorer=fuzz.ratio, score_cutoff=75)
-        if match:
-            entry = next((d for d in _dictionary if d["word"] == match[0]), None)
-            if entry and entry.get("definitionEnglish"):
-                found.append({
-                    "lunyoro_word": entry["word"],
-                    "english_definition": entry["definitionEnglish"],
-                })
-
-    return {
-        "translation": None,
-        "method": "dictionary_fallback",
-        "confidence": round(best_score, 3),
-        "matched_lunyoro": lunyoro_sentences[best_idx],
-        "alternatives": alternatives,
-        "dictionary_matches": found,
-        "message": "No close translation found. Showing closest matches.",
-    }
-
-
 def get_index_and_model():
-    """Expose loaded index and model for batch operations."""
-    _load()
-    return _index, _model
+    _load_retrieval()
+    return _index, _sem_model
 
 
 def spellcheck(text: str) -> list:
-    """
-    Check each word in the Lunyoro/Rutooro text against the dictionary.
-    Only flags words that have no reasonable match in the known corpus.
-    """
-    _load()
+    _load_retrieval()
     import re
-
-    # build known word set from dictionary entries + all individual words in lunyoro sentences
     known_words = set(d["word"].lower() for d in _dictionary if d["word"])
     for sent in _index["lunyoro_sentences"]:
         for w in re.findall(r"[a-zA-Z']+", sent):
@@ -207,31 +234,18 @@ def spellcheck(text: str) -> list:
                 known_words.add(w.lower())
 
     dict_word_list = list(known_words)
-
-    tokens = re.findall(r"[a-zA-Z']+", text)
+    tokens     = re.findall(r"[a-zA-Z']+", text)
     misspelled = []
 
     for token in tokens:
         lower = token.lower()
-
-        # skip very short words — too ambiguous to check
-        if len(lower) < 4:
+        if len(lower) < 4 or lower in known_words:
             continue
-
-        # exact match — definitely correct
-        if lower in known_words:
-            continue
-
-        # fuzzy match — if best score >= 85 treat as a known variant (morphology, prefix, etc.)
         best = process.extractOne(lower, dict_word_list, scorer=fuzz.ratio)
         if best and best[1] >= 85:
             continue
-
-        # genuinely unknown — suggest closest matches above 65
-        suggestions = process.extract(lower, dict_word_list, scorer=fuzz.ratio, limit=3, score_cutoff=65)
-        misspelled.append({
-            "word": token,
-            "suggestions": [s[0] for s in suggestions],
-        })
+        suggestions = process.extract(lower, dict_word_list, scorer=fuzz.ratio,
+                                      limit=3, score_cutoff=65)
+        misspelled.append({"word": token, "suggestions": [s[0] for s in suggestions]})
 
     return misspelled
