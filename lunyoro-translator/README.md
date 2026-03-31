@@ -1,33 +1,58 @@
 # Lunyoro / Rutooro Translator
 
-## Setup & Run
+AI-powered translation between English and Lunyoro/Rutooro using fine-tuned MarianMT neural models.
 
-### Backend (Python)
+## Quick Start (after cloning)
 
+> Requires: Python 3.10+, Node.js 18+, Git LFS
+
+### 1. Pull model files (Git LFS)
 ```bash
-cd backend
-pip install -r requirements.txt
-
-# Build the translation index (run once)
-python train.py
-
-# Start the API server
-python -m uvicorn main:app --reload --port 8000
+git lfs pull
 ```
 
-### Frontend (Next.js)
-
+### 2. Backend setup
 ```bash
-cd frontend
+cd lunyoro-translator/backend
+python setup.py
+```
+
+### 3. Start backend
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+### 4. Start frontend (new terminal)
+```bash
+cd lunyoro-translator/frontend
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000
+### 5. Open the app
+```
+http://localhost:3002
+```
 
-## How it works
+---
 
-1. `train.py` encodes all 6,246 English sentences using a multilingual sentence transformer
-2. At query time, your input is encoded and matched against the closest sentence
-3. Falls back to dictionary word lookup if no close match found
-4. All translations are saved to `backend/history.json`
+## Models
+
+The fine-tuned models are stored in `backend/model/` via Git LFS — no training required after cloning.
+
+| Model | Direction | Epochs | Best val_loss |
+|-------|-----------|--------|---------------|
+| `en2lun` | English → Lunyoro/Rutooro | 10 | 2.12 |
+| `lun2en` | Lunyoro/Rutooro → English | 10 | 2.12 |
+
+To retrain from scratch:
+```bash
+python prepare_training_data.py
+python fine_tune.py --direction both --epochs 10 --batch_size 32
+```
+
+## Dataset
+
+- 6,200 parallel sentence pairs (cleaned)
+- 1,142 dictionary entries with definitions and examples
+- 8,521 augmented training pairs (includes dictionary examples)
