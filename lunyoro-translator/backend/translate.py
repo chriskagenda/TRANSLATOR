@@ -12,6 +12,12 @@ from preprocess import load_dictionary
 
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "model", "translation_index.pkl")
 MODEL_DIR  = os.path.join(os.path.dirname(__file__), "model")
+SEM_MODEL_DIR = os.path.join(MODEL_DIR, "sem_model")
+
+# Force fully offline mode — no network calls to HuggingFace
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 # ── cached singletons ────────────────────────────────────────────────────────
 _index      = None
@@ -32,7 +38,9 @@ def _load_retrieval():
         raise FileNotFoundError("Translation index not found. Run train.py first.")
     with open(INDEX_PATH, "rb") as f:
         _index = pickle.load(f)
-    _sem_model  = SentenceTransformer(_index["model_name"])
+    # Load from local copy first; fall back to cached name if local copy missing
+    sem_path = SEM_MODEL_DIR if os.path.isdir(SEM_MODEL_DIR) else _index["model_name"]
+    _sem_model  = SentenceTransformer(sem_path)
     _dictionary = _index["dictionary"]
 
 

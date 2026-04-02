@@ -5,8 +5,9 @@ import Dictionary from "@/components/Dictionary";
 import History from "@/components/History";
 import PdfTranslator from "@/components/PdfTranslator";
 import VoiceTranslator from "@/components/VoiceTranslator";
+import ChatGenerator from "@/components/ChatGenerator";
 
-type Tab = "translate" | "voice" | "pdf" | "dictionary" | "history";
+type Tab = "translate" | "generate" | "voice" | "pdf" | "dictionary" | "history";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("translate");
@@ -20,7 +21,7 @@ export default function Home() {
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-gray-200">
-        {(["translate", "voice", "pdf", "dictionary", "history"] as Tab[]).map((t) => (
+        {(["translate", "generate", "voice", "pdf", "dictionary", "history"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -30,12 +31,13 @@ export default function Home() {
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "pdf" ? "PDF" : t === "voice" ? "🎙 Voice" : t}
+            {t === "pdf" ? "PDF" : t === "voice" ? "🎙 Voice" : t === "generate" ? "✨ Generate" : t}
           </button>
         ))}
       </div>
 
       {tab === "translate" && <Translator />}
+      {tab === "generate" && <ChatGenerator />}
       {tab === "voice" && <VoiceTranslator />}
       {tab === "pdf" && <PdfTranslator />}
       {tab === "dictionary" && <Dictionary />}
