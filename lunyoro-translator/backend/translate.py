@@ -23,6 +23,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 _index      = None
 _sem_model  = None
 _dictionary = None
+_corpus_vocab = None
 
 _mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
 _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
@@ -31,7 +32,7 @@ _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
 # ── loaders ──────────────────────────────────────────────────────────────────
 
 def _load_retrieval():
-    global _index, _sem_model, _dictionary
+    global _index, _sem_model, _dictionary, _corpus_vocab
     if _index is not None:
         return
     if not os.path.exists(INDEX_PATH):
@@ -232,28 +233,104 @@ def get_index_and_model():
     return _index, _sem_model
 
 
-def spellcheck(text: str) -> list:
-    _load_retrieval()
+def _build_corpus_vocab() -> set:
+    """
+    Build a vocabulary of known Lunyoro/Rutooro words from:
+    1. The cleaned training corpus sentences (lunyoro_sentences from the index)
+    2. The MarianMT lun2en tokenizer vocabulary (SentencePiece surface forms)
+    3. The dictionary word list
+    """
     import re
-    known_words = set(d["word"].lower() for d in _dictionary if d["word"])
+    _load_retrieval()
+    known: set[str] = set()
+
+    # 1. All words from the cleaned corpus sentences
     for sent in _index["lunyoro_sentences"]:
         for w in re.findall(r"[a-zA-Z']+", sent):
-            if len(w) >= 3:
-                known_words.add(w.lower())
+            if len(w) >= 2:
+                known.add(w.lower())
 
-    dict_word_list = list(known_words)
-    tokens     = re.findall(r"[a-zA-Z']+", text)
+    # 2. MarianMT lun2en tokenizer vocab — surface forms that are real words
+    lun2en_path = os.path.join(MODEL_DIR, "lun2en")
+    if os.path.isdir(lun2en_path):
+        try:
+            from transformers import MarianTokenizer
+            tok = MarianTokenizer.from_pretrained(lun2en_path)
+            for token in tok.get_vocab().keys():
+                # strip sentencepiece prefix ▁ and keep only alphabetic tokens
+                clean = token.lstrip("▁").lower()
+                if clean.isalpha() and len(clean) >= 2:
+                    known.add(clean)
+        except Exception:
+            pass
+
+    # 3. Dictionary words
+    for d in _dictionary:
+        if d.get("word"):
+            known.add(d["word"].lower())
+
+    return known
+
+
+# cache the vocab so it's only built once
+_corpus_vocab: set | None = None
+
+
+def spellcheck(text: str) -> list:
+    global _corpus_vocab
+    import re
+    _load_retrieval()
+
+    if _corpus_vocab is None:
+        _corpus_vocab = _build_corpus_vocab()
+
+    vocab_list = list(_corpus_vocab)
+    tokens = re.findall(r"[a-zA-Z']+", text)
     misspelled = []
 
     for token in tokens:
         lower = token.lower()
-        if len(lower) < 4 or lower in known_words:
+        if len(lower) < 3 or lower in _corpus_vocab:
             continue
-        best = process.extractOne(lower, dict_word_list, scorer=fuzz.ratio)
-        if best and best[1] >= 85:
+
+        # Check if the MarianMT lun2en model can encode it cleanly (known subwords)
+        lun2en_path = os.path.join(MODEL_DIR, "lun2en")
+        model_knows = False
+        if os.path.isdir(lun2en_path) and _load_mt("lun2en"):
+            try:
+                tokenizer, _, _ = _mt_models["lun2en"]
+                pieces = tokenizer.tokenize(lower)
+                # If encoded as a single piece (no UNK), the model recognises it
+                if pieces and "<unk>" not in pieces and len(pieces) == 1:
+                    model_knows = True
+            except Exception:
+                pass
+
+        if model_knows:
             continue
-        suggestions = process.extract(lower, dict_word_list, scorer=fuzz.ratio,
-                                      limit=3, score_cutoff=65)
-        misspelled.append({"word": token, "suggestions": [s[0] for s in suggestions]})
+
+        # Generate suggestions: fuzzy match against corpus vocab
+        # Prefer words that share the same prefix (common in Bantu languages)
+        prefix = lower[:3]
+        prefix_words = [w for w in vocab_list if w.startswith(prefix)]
+        candidate_pool = prefix_words if len(prefix_words) >= 10 else vocab_list
+
+        suggestions = process.extract(
+            lower, candidate_pool,
+            scorer=fuzz.ratio,
+            limit=5,
+            score_cutoff=55,
+        )
+        # deduplicate and take top 3
+        seen: set[str] = set()
+        top: list[str] = []
+        for s in sorted(suggestions, key=lambda x: -x[1]):
+            if s[0] not in seen:
+                seen.add(s[0])
+                top.append(s[0])
+            if len(top) == 3:
+                break
+
+        misspelled.append({"word": token, "suggestions": top})
 
     return misspelled

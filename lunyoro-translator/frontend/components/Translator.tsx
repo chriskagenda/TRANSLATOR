@@ -38,12 +38,11 @@ export default function Translator() {
   const spellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // track if we're composing (IME) to avoid caret jumps
   const isComposing = useRef(false);
 
   const fromLabel = direction === "en→lun" ? "English" : "Lunyoro / Rutooro";
-  const toLabel = direction === "en→lun" ? "Lunyoro / Rutooro" : "English";
-  const endpoint = direction === "en→lun" ? "/translate" : "/translate-reverse";
+  const toLabel   = direction === "en→lun" ? "Lunyoro / Rutooro" : "English";
+  const endpoint  = direction === "en→lun" ? "/translate" : "/translate-reverse";
 
   function swapDirection() {
     setDirection((d) => (d === "en→lun" ? "lun→en" : "en→lun"));
@@ -51,9 +50,10 @@ export default function Translator() {
     setResult(null);
     setError("");
     setMisspelled([]);
+    setTooltip(null);
   }
 
-  // ── spellcheck ──────────────────────────────────────────────────────────────
+  // ── spellcheck ───────────────────────────────────────────────────────────────
   const runSpellcheck = useCallback(async (text: string) => {
     if (!text.trim()) { setMisspelled([]); return; }
     try {
@@ -76,11 +76,14 @@ export default function Translator() {
     return () => { if (spellTimer.current) clearTimeout(spellTimer.current); };
   }, [input, direction, runSpellcheck]);
 
-  // ── build HTML with red wavy underlines ─────────────────────────────────────
+  // ── build HTML with red wavy underlines ──────────────────────────────────────
+  function escHtml(s: string) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
   function buildHtml(text: string): string {
     if (!misspelled.length) return escHtml(text);
     const badWords = new Map(misspelled.map((m) => [m.word.toLowerCase(), m]));
-    // split on word boundaries keeping delimiters
     return text.split(/(\b)/).map((chunk) => {
       const entry = badWords.get(chunk.toLowerCase());
       if (entry) {
@@ -91,11 +94,7 @@ export default function Translator() {
     }).join("");
   }
 
-  function escHtml(s: string) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-
-  // ── sync contentEditable → state (preserve caret) ───────────────────────────
+  // ── caret preservation ───────────────────────────────────────────────────────
   function saveCaret(el: HTMLDivElement): number {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return 0;
@@ -120,17 +119,16 @@ export default function Translator() {
       }
       return null;
     };
-    const result = walk(el, offset);
-    if (!result) return;
+    const pos = walk(el, offset);
+    if (!pos) return;
     const range = document.createRange();
-    range.setStart(result.node, result.offset);
+    range.setStart(pos.node, pos.offset);
     range.collapse(true);
     const sel = window.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(range);
   }
 
-  // re-render highlighted HTML whenever misspelled list changes
   useEffect(() => {
     if (direction !== "lun→en" || !editorRef.current) return;
     const el = editorRef.current;
@@ -142,26 +140,32 @@ export default function Translator() {
 
   function handleEditorInput() {
     if (isComposing.current || !editorRef.current) return;
-    const text = editorRef.current.innerText;
-    setInput(text);
+    setInput(editorRef.current.innerText);
   }
 
-  // ── tooltip on misspelled word click ────────────────────────────────────────
-  function handleEditorClick(e: React.MouseEvent<HTMLDivElement>) {
-    const target = e.target as HTMLElement;
-    if (!target.classList.contains("misspelled")) setTooltip(null);
-  }
+  // ── hover tooltip ────────────────────────────────────────────────────────────
+  const tooltipLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleEditorMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement;
     if (target.classList.contains("misspelled")) {
+      if (tooltipLeaveTimer.current) clearTimeout(tooltipLeaveTimer.current);
       const word = target.getAttribute("data-word") || "";
       const tips = (target.getAttribute("data-tips") || "").split("|").filter(Boolean);
       const rect = target.getBoundingClientRect();
       setTooltip({ word, suggestions: tips, x: rect.left, y: rect.bottom });
     } else {
-      setTooltip(null);
+      scheduleTooltipClose();
     }
+  }
+
+  function scheduleTooltipClose() {
+    if (tooltipLeaveTimer.current) clearTimeout(tooltipLeaveTimer.current);
+    tooltipLeaveTimer.current = setTimeout(() => setTooltip(null), 120);
+  }
+
+  function cancelTooltipClose() {
+    if (tooltipLeaveTimer.current) clearTimeout(tooltipLeaveTimer.current);
   }
 
   function applySuggestion(original: string, suggestion: string) {
@@ -218,27 +222,26 @@ export default function Translator() {
         <div className="flex justify-between items-center mb-1">
           <label className="text-sm font-medium text-gray-700">{fromLabel}</label>
           {direction === "lun→en" && misspelled.length > 0 && (
-            <span className="text-xs text-red-500">{misspelled.length} possible misspelling{misspelled.length > 1 ? "s" : ""} — click to fix</span>
+            <span className="text-xs text-red-500">
+              {misspelled.length} possible misspelling{misspelled.length > 1 ? "s" : ""} — hover to fix
+            </span>
           )}
         </div>
 
         {direction === "lun→en" ? (
-          /* contentEditable for Lunyoro — supports inline red underlines */
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
             onInput={handleEditorInput}
-            onClick={handleEditorClick}
             onMouseMove={handleEditorMouseMove}
-            onMouseLeave={() => setTooltip(null)}
+            onMouseLeave={scheduleTooltipClose}
             onCompositionStart={() => { isComposing.current = true; }}
             onCompositionEnd={() => { isComposing.current = false; handleEditorInput(); }}
             onKeyDown={(e) => e.key === "Enter" && e.ctrlKey && handleTranslate()}
             className={`w-full border rounded-lg p-3 text-sm min-h-[96px] focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed text-gray-900 whitespace-pre-wrap break-words ${
               misspelled.length > 0 ? "border-red-300" : "border-gray-300"
             }`}
-            data-placeholder={`Enter ${fromLabel} text to translate...`}
             style={{ fontFamily: "inherit" }}
           />
         ) : (
@@ -255,28 +258,31 @@ export default function Translator() {
         <p className="text-xs text-gray-400 mt-1">Ctrl+Enter to translate</p>
       </div>
 
-      {/* Tooltip for suggestions */}
+      {/* Hover tooltip for misspelled words */}
       {tooltip && (
         <div
-          className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm"
+          className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm min-w-[140px]"
           style={{ top: tooltip.y + 6, left: tooltip.x }}
-          onMouseEnter={() => {/* keep open */}}
-          onMouseLeave={() => setTooltip(null)}
+          onMouseEnter={cancelTooltipClose}
+          onMouseLeave={scheduleTooltipClose}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="text-xs text-gray-400 mb-1">Did you mean?</p>
+          <p className="text-xs text-gray-400 mb-1.5">Did you mean?</p>
           {tooltip.suggestions.length > 0 ? (
             tooltip.suggestions.map((s) => (
               <button
                 key={s}
-                className="block w-full text-left text-blue-600 hover:bg-blue-50 px-2 py-0.5 rounded"
-                onClick={() => applySuggestion(tooltip.word, s)}
+                className="block w-full text-left text-blue-600 hover:bg-blue-50 active:bg-blue-100 px-2 py-1.5 rounded text-sm cursor-pointer"
+                onMouseDown={(e) => {
+                  e.preventDefault(); // prevent editor blur before click lands
+                  applySuggestion(tooltip.word, s);
+                }}
               >
                 {s}
               </button>
             ))
           ) : (
-            <p className="text-gray-400 italic">No suggestions</p>
+            <p className="text-gray-400 italic text-xs">No suggestions</p>
           )}
         </div>
       )}

@@ -57,9 +57,6 @@ class WordLookupRequest(BaseModel):
 class SpellCheckRequest(BaseModel):
     text: str
 
-class GenerateRequest(BaseModel):
-    prompt: str
-
 
 @app.get("/")
 def root():
@@ -130,70 +127,6 @@ def get_history():
 @app.get("/health")
 def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
-
-
-@app.post("/generate")
-def generate_lunyoro(req: GenerateRequest):
-    """
-    Takes an English prompt and generates a Lunyoro/Rutooro response.
-    Translates the prompt to Lunyoro, then builds a contextual reply
-    by finding semantically related Lunyoro sentences from the corpus.
-    """
-    if not req.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(req.prompt) > 500:
-        raise HTTPException(status_code=400, detail="Prompt too long (max 500 chars)")
-
-    import numpy as np
-    from sentence_transformers import util
-    from translate import _mt_translate
-
-    # 1. Translate the prompt to Lunyoro
-    translated_prompt = _mt_translate(req.prompt, "en2lun")
-    if not translated_prompt:
-        result = translate(req.prompt)
-        translated_prompt = result.get("translation") or req.prompt
-
-    # 2. Find related Lunyoro sentences from the corpus for context
-    _index, _sem_model = get_index_and_model()
-    english_sentences = _index["english_sentences"]
-    lunyoro_sentences = _index["lunyoro_sentences"]
-
-    q_emb = _sem_model.encode(req.prompt, convert_to_tensor=True)
-    scores = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
-    top_idx = np.argsort(scores)[::-1][:5]
-
-    related = [
-        {"english": english_sentences[i], "lunyoro": lunyoro_sentences[i], "score": round(float(scores[i]), 3)}
-        for i in top_idx if float(scores[i]) > 0.3
-    ]
-
-    # 3. Build a generated Lunyoro response by composing related sentences
-    if related:
-        # Use the top match as the primary response, append supporting sentences
-        primary = related[0]["lunyoro"]
-        supporting = [r["lunyoro"] for r in related[1:3] if r["score"] > 0.4]
-        generated = primary
-        if supporting:
-            generated = generated + " " + " ".join(supporting)
-    else:
-        generated = translated_prompt
-
-    save_history({
-        "input": req.prompt,
-        "direction": "en→lun",
-        "translation": generated,
-        "method": "generate",
-        "confidence": round(float(scores[top_idx[0]]), 3) if len(top_idx) else 0,
-        "timestamp": datetime.utcnow().isoformat(),
-    })
-
-    return {
-        "prompt": req.prompt,
-        "prompt_translated": translated_prompt,
-        "generated": generated,
-        "related": related,
-    }
 
 
 @app.post("/translate-pdf")
