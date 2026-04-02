@@ -238,7 +238,7 @@ export default function Translator() {
             onMouseLeave={scheduleTooltipClose}
             onCompositionStart={() => { isComposing.current = true; }}
             onCompositionEnd={() => { isComposing.current = false; handleEditorInput(); }}
-            onKeyDown={(e) => e.key === "Enter" && e.ctrlKey && handleTranslate()}
+            onKeyDown={(e) => e.key === "Enter" && e.ctrlKey && misspelled.length === 0 && handleTranslate()}
             className={`w-full border rounded-lg p-3 text-sm min-h-[96px] focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed text-gray-900 whitespace-pre-wrap break-words ${
               misspelled.length > 0 ? "border-red-300" : "border-gray-300"
             }`}
@@ -289,10 +289,11 @@ export default function Translator() {
 
       <button
         onClick={handleTranslate}
-        disabled={loading || !input.trim()}
+        disabled={loading || !input.trim() || (direction === "lun→en" && misspelled.length > 0)}
+        title={direction === "lun→en" && misspelled.length > 0 ? "Fix spelling errors before translating" : undefined}
         className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {loading ? "Translating..." : `Translate to ${toLabel}`}
+        {loading ? "Translating..." : direction === "lun→en" && misspelled.length > 0 ? `Fix ${misspelled.length} spelling error${misspelled.length > 1 ? "s" : ""} to translate` : `Translate to ${toLabel}`}
       </button>
 
       {error && (
