@@ -218,14 +218,172 @@ def _dict_fallback_reverse(text, best_score, matched_lunyoro, alternatives):
             "message": "No close translation found. Showing closest matches."}
 
 
-def lookup_word(word: str) -> list:
+def _infer_pos(word: str) -> str | None:
+    """
+    Heuristically infer the likely POS of a Lunyoro/Rutooro word from its prefix.
+    Based on Bantu noun class and verb prefix patterns in the corpus.
+    """
+    w = word.lower().strip()
+    # Verb infinitives start with ok- / oku- / okw-
+    if w.startswith(("oku", "okw", "ok-")):
+        return "V"
+    # Noun class prefixes → N
+    noun_prefixes = ("om", "ab", "ob", "eb", "ek", "ak", "en", "em", "in", "im",
+                     "oru", "ama", "obu", "otu", "oku", "eri", "aga", "ege")
+    if any(w.startswith(p) for p in noun_prefixes):
+        return "N"
+    # Adjective-like prefixes (less reliable)
+    if w.startswith(("nk", "ng", "mbi", "ndi", "nge")):
+        return "ADJ"
+    return None
+
+
+def lookup_word(word: str, direction: str = "en→lun") -> list:
+    """
+    Dictionary lookup powered by MarianMT + semantic search + POS context.
+    1. Translate the query with MarianMT
+    2. Infer POS from query/translation to boost relevant entries
+    3. Semantic search against the corpus
+    4. Fuzzy match against dictionary, with POS-aware scoring
+    """
     _load_retrieval()
+    word = word.strip()
     word_lower = word.lower()
     results = []
+    seen_words: set[str] = set()
+
+    # ── 1. MarianMT translation ──────────────────────────────────────────────
+    mt_direction = "en2lun" if direction == "en→lun" else "lun2en"
+    mt_translation = _mt_translate(word, mt_direction)
+
+    # ── 2. Infer POS from query and translation ──────────────────────────────
+    # For en→lun: infer from the Lunyoro translation; for lun→en: from the query
+    lunyoro_side = mt_translation if direction == "en→lun" else word
+    inferred_pos = _infer_pos(lunyoro_side) if lunyoro_side else None
+
+    # Also detect POS hints in English query (simple heuristics)
+    en_side = word if direction == "en→lun" else (mt_translation or "")
+    if not inferred_pos and en_side:
+        en_lower = en_side.lower()
+        if en_lower.startswith("to ") or en_lower.endswith(("ing", "ed", "ify", "ize", "ise")):
+            inferred_pos = "V"
+        elif en_lower.endswith(("ness", "tion", "ment", "ity", "er", "or", "ist")):
+            inferred_pos = "N"
+        elif en_lower.endswith(("ful", "less", "ous", "ive", "al", "ic", "able", "ible")):
+            inferred_pos = "ADJ"
+
+    # ── 3. Semantic search against corpus ───────────────────────────────────
+    q_emb = _sem_model.encode(word, convert_to_tensor=True)
+
+    if direction == "en→lun":
+        scores = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
+    else:
+        if "lunyoro_embeddings" not in _index:
+            _index["lunyoro_embeddings"] = _sem_model.encode(
+                _index["lunyoro_sentences"], show_progress_bar=False, batch_size=64
+            )
+        scores = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
+
+    top_idx = np.argsort(scores)[::-1][:5]
+    corpus_hits = []
+    for i in top_idx:
+        score = float(scores[i])
+        if score < 0.35:
+            break
+        corpus_hits.append({
+            "word": _index["lunyoro_sentences"][i] if direction == "en→lun" else _index["english_sentences"][i],
+            "definitionEnglish": _index["english_sentences"][i] if direction == "en→lun" else _index["lunyoro_sentences"][i],
+            "definitionNative": "",
+            "exampleSentence1": _index["lunyoro_sentences"][i],
+            "exampleSentence1English": _index["english_sentences"][i],
+            "dialect": "",
+            "pos": "",
+            "source": "corpus",
+            "confidence": round(score, 3),
+        })
+
+    # ── 4. Fuzzy match against dictionary with POS boosting ─────────────────
+    dict_words = [d["word"] for d in _dictionary]
+
+    fuzzy_matches = process.extract(word_lower, [w.lower() for w in dict_words],
+                                    scorer=fuzz.partial_ratio, limit=10, score_cutoff=60)
+
+    if mt_translation:
+        mt_matches = process.extract(mt_translation.lower(), [w.lower() for w in dict_words],
+                                     scorer=fuzz.partial_ratio, limit=5, score_cutoff=60)
+        fuzzy_matches = list({m[0]: m for m in fuzzy_matches + mt_matches}.values())
+
+    dict_results = []
+    for match in fuzzy_matches:
+        entry = next((d for d in _dictionary if d["word"].lower() == match[0]), None)
+        if not entry or entry["word"] in seen_words:
+            continue
+        seen_words.add(entry["word"])
+
+        base_score = match[1] / 100.0
+        entry_pos = (entry.get("pos") or "").strip().upper()
+
+        # POS boost: +0.15 for exact match, +0.05 for related (e.g. N↔ADJ)
+        pos_boost = 0.0
+        if inferred_pos and entry_pos:
+            if entry_pos == inferred_pos:
+                pos_boost = 0.15
+            elif (inferred_pos == "N" and entry_pos == "ADJ") or \
+                 (inferred_pos == "ADJ" and entry_pos == "N"):
+                pos_boost = 0.05
+
+        dict_results.append({
+            **entry,
+            "source": "dictionary",
+            "confidence": round(min(base_score + pos_boost, 1.0), 3),
+            "pos_matched": entry_pos == inferred_pos if inferred_pos and entry_pos else False,
+        })
+
+    # Sort: POS-matched entries first, then by confidence
+    dict_results.sort(key=lambda x: (-int(x.get("pos_matched", False)), -x["confidence"]))
+
+    # ── 5. Exact / substring fallback ───────────────────────────────────────
     for entry in _dictionary:
-        if entry["word"].lower() == word_lower or word_lower in entry.get("definitionEnglish", "").lower():
-            results.append(entry)
-    return results[:5]
+        w = entry["word"]
+        if w in seen_words:
+            continue
+        if (w.lower() == word_lower
+                or word_lower in w.lower()
+                or word_lower in (entry.get("definitionEnglish") or "").lower()):
+            seen_words.add(w)
+            entry_pos = (entry.get("pos") or "").strip().upper()
+            pos_boost = 0.15 if (inferred_pos and entry_pos == inferred_pos) else 0.0
+            dict_results.append({
+                **entry,
+                "source": "dictionary",
+                "confidence": round(min(1.0 + pos_boost, 1.0), 3),
+                "pos_matched": entry_pos == inferred_pos if inferred_pos else False,
+            })
+
+    # ── 6. Build MT result — enrich with inferred POS ───────────────────────
+    if mt_translation:
+        # Find a dictionary entry that matches the MT output for POS/definition context
+        mt_lower = mt_translation.lower()
+        mt_dict_entry = next(
+            (d for d in _dictionary if d["word"].lower() == mt_lower), None
+        )
+        results.append({
+            "word": mt_translation if direction == "en→lun" else word,
+            "definitionEnglish": word if direction == "en→lun" else mt_translation,
+            "definitionNative": mt_dict_entry.get("definitionNative", "") if mt_dict_entry else "",
+            "exampleSentence1": mt_dict_entry.get("exampleSentence1", "") if mt_dict_entry else "",
+            "exampleSentence1English": mt_dict_entry.get("exampleSentence1English", "") if mt_dict_entry else "",
+            "dialect": mt_dict_entry.get("dialect", "") if mt_dict_entry else "",
+            "pos": mt_dict_entry.get("pos", inferred_pos or "") if mt_dict_entry else (inferred_pos or ""),
+            "source": "neural_mt",
+            "confidence": 1.0,
+            "pos_matched": True if inferred_pos else False,
+        })
+
+    results.extend(dict_results[:5])
+    results.extend(corpus_hits[:3])
+
+    return results[:8]
 
 
 def get_index_and_model():
