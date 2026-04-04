@@ -1,9 +1,18 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type DictDirection = "en→lun" | "lun→en";
+type PosFilter = "ALL" | "N" | "V" | "ADJ" | "OTHER";
+
+const POS_LABELS: Record<string, { label: string; color: string }> = {
+  N:    { label: "Noun",      color: "bg-blue-100 text-blue-700" },
+  V:    { label: "Verb",      color: "bg-green-100 text-green-700" },
+  ADJ:  { label: "Adjective", color: "bg-orange-100 text-orange-700" },
+  PART: { label: "Particle",  color: "bg-yellow-100 text-yellow-700" },
+  PRON: { label: "Pronoun",   color: "bg-pink-100 text-pink-700" },
+};
 
 interface DictEntry {
   word: string;
@@ -13,6 +22,9 @@ interface DictEntry {
   exampleSentence1English: string;
   dialect: string;
   pos: string;
+  source?: "neural_mt" | "dictionary" | "corpus";
+  confidence?: number;
+  pos_matched?: boolean;
 }
 
 export default function Dictionary() {
@@ -21,6 +33,7 @@ export default function Dictionary() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [direction, setDirection] = useState<DictDirection>("en→lun");
+  const [posFilter, setPosFilter] = useState<PosFilter>("ALL");
 
   const placeholder = direction === "en→lun"
     ? "Search an English word..."
@@ -30,11 +43,12 @@ export default function Dictionary() {
     if (!query.trim()) return;
     setLoading(true);
     setSearched(true);
+    setPosFilter("ALL");
     try {
       const res = await fetch(`${API}/lookup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ word: query }),
+        body: JSON.stringify({ word: query, direction }),
       });
       const data = await res.json();
       setResults(data.results || []);
@@ -50,7 +64,21 @@ export default function Dictionary() {
     setQuery("");
     setResults([]);
     setSearched(false);
+    setPosFilter("ALL");
   }
+
+  // Derive which POS tabs have results
+  const availablePos = useMemo(() => {
+    const set = new Set<string>();
+    results.forEach(r => { if (r.pos) set.add(r.pos.toUpperCase()); });
+    return set;
+  }, [results]);
+
+  const filtered = useMemo(() => {
+    if (posFilter === "ALL") return results;
+    if (posFilter === "OTHER") return results.filter(r => !r.pos || !["N","V","ADJ"].includes(r.pos.toUpperCase()));
+    return results.filter(r => (r.pos || "").toUpperCase() === posFilter);
+  }, [results, posFilter]);
 
   return (
     <div className="space-y-4">
@@ -58,21 +86,13 @@ export default function Dictionary() {
       <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
         <button
           onClick={() => handleDirectionChange("en→lun")}
-          className={`flex-1 py-2 transition-colors ${
-            direction === "en→lun"
-              ? "bg-blue-600 text-white"
-              : "bg-white text-gray-600 hover:bg-gray-50"
-          }`}
+          className={`flex-1 py-2 transition-colors ${direction === "en→lun" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
         >
           English → Lunyoro / Rutooro
         </button>
         <button
           onClick={() => handleDirectionChange("lun→en")}
-          className={`flex-1 py-2 transition-colors ${
-            direction === "lun→en"
-              ? "bg-blue-600 text-white"
-              : "bg-white text-gray-600 hover:bg-gray-50"
-          }`}
+          className={`flex-1 py-2 transition-colors ${direction === "lun→en" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
         >
           Lunyoro / Rutooro → English
         </button>
@@ -97,6 +117,32 @@ export default function Dictionary() {
         </button>
       </div>
 
+      {/* POS filter tabs — only shown when results exist */}
+      {results.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {(["ALL", "N", "V", "ADJ"] as PosFilter[]).map((p) => {
+            const info = p === "ALL" ? null : POS_LABELS[p];
+            const count = p === "ALL"
+              ? results.length
+              : results.filter(r => (r.pos || "").toUpperCase() === p).length;
+            if (p !== "ALL" && count === 0) return null;
+            return (
+              <button
+                key={p}
+                onClick={() => setPosFilter(p)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  posFilter === p
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {p === "ALL" ? "All" : info?.label} {count > 0 && <span className="opacity-70">({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {searched && results.length === 0 && !loading && (
         <p className="text-gray-500 text-sm text-center py-4">
           No results found for &quot;{query}&quot;
@@ -104,69 +150,84 @@ export default function Dictionary() {
       )}
 
       <div className="space-y-3">
-        {results.map((entry, i) => (
-          <div key={i} className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="flex justify-between items-start mb-1">
-              {/* heading flips based on direction */}
-              {direction === "en→lun" ? (
-                <div>
-                  <span className="text-xs text-gray-400 uppercase tracking-wide">Lunyoro / Rutooro</span>
-                  <p className="text-lg font-semibold text-gray-800">{entry.word}</p>
+        {filtered.map((entry, i) => {
+          const posKey = (entry.pos || "").toUpperCase();
+          const posInfo = POS_LABELS[posKey];
+          return (
+            <div key={i} className={`bg-white border rounded-lg p-4 ${entry.pos_matched ? "border-blue-200" : "border-gray-200"}`}>
+              <div className="flex justify-between items-start mb-1">
+                {direction === "en→lun" ? (
+                  <div>
+                    <span className="text-xs text-gray-400 uppercase tracking-wide">Lunyoro / Rutooro</span>
+                    <p className="text-lg font-semibold text-gray-800">{entry.word}</p>
+                  </div>
+                ) : (
+                  <div>
+                    <span className="text-xs text-gray-400 uppercase tracking-wide">English</span>
+                    <p className="text-lg font-semibold text-gray-800">{entry.definitionEnglish || entry.word}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-1 mt-1 flex-wrap justify-end items-center">
+                  {entry.source === "neural_mt" && (
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">AI</span>
+                  )}
+                  {entry.source === "corpus" && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">corpus</span>
+                  )}
+                  {posInfo ? (
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${posInfo.color}`}>
+                      {posInfo.label}
+                    </span>
+                  ) : entry.pos ? (
+                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{entry.pos}</span>
+                  ) : null}
+                  {entry.dialect && (
+                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">{entry.dialect}</span>
+                  )}
+                  {entry.confidence !== undefined && entry.confidence < 1 && (
+                    <span className="text-xs text-gray-400">{Math.round(entry.confidence * 100)}%</span>
+                  )}
                 </div>
+              </div>
+
+              {/* Definitions */}
+              {direction === "en→lun" ? (
+                <>
+                  {entry.definitionEnglish && (
+                    <p className="text-sm text-gray-600">{entry.definitionEnglish}</p>
+                  )}
+                  {entry.definitionNative && (
+                    <p className="text-sm text-gray-500 italic mt-0.5">{entry.definitionNative}</p>
+                  )}
+                </>
               ) : (
-                <div>
-                  <span className="text-xs text-gray-400 uppercase tracking-wide">English</span>
-                  <p className="text-lg font-semibold text-gray-800">
-                    {entry.definitionEnglish || entry.word}
-                  </p>
+                <>
+                  {entry.word && (
+                    <p className="text-sm text-gray-600">
+                      <span className="font-medium text-gray-700">Lunyoro: </span>{entry.word}
+                    </p>
+                  )}
+                  {entry.definitionNative && (
+                    <p className="text-sm text-gray-500 italic mt-0.5">{entry.definitionNative}</p>
+                  )}
+                </>
+              )}
+
+              {/* Example sentences */}
+              {(entry.exampleSentence1 || entry.exampleSentence1English) && (
+                <div className="mt-2 text-xs text-gray-500 border-t border-gray-100 pt-2 space-y-0.5">
+                  {entry.exampleSentence1 && (
+                    <p className="font-medium text-gray-600">{entry.exampleSentence1}</p>
+                  )}
+                  {entry.exampleSentence1English && (
+                    <p>{entry.exampleSentence1English}</p>
+                  )}
                 </div>
               )}
-              <div className="flex gap-1 mt-1">
-                {entry.pos && (
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{entry.pos}</span>
-                )}
-                {entry.dialect && (
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{entry.dialect}</span>
-                )}
-              </div>
             </div>
-
-            {/* definition shown in the opposite language */}
-            {direction === "en→lun" ? (
-              <>
-                {entry.definitionEnglish && (
-                  <p className="text-sm text-gray-600">{entry.definitionEnglish}</p>
-                )}
-                {entry.definitionNative && (
-                  <p className="text-sm text-gray-500 italic">{entry.definitionNative}</p>
-                )}
-              </>
-            ) : (
-              <>
-                {entry.word && (
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium text-gray-700">Lunyoro: </span>{entry.word}
-                  </p>
-                )}
-                {entry.definitionNative && (
-                  <p className="text-sm text-gray-500 italic">{entry.definitionNative}</p>
-                )}
-              </>
-            )}
-
-            {/* example sentences */}
-            {(entry.exampleSentence1 || entry.exampleSentence1English) && (
-              <div className="mt-2 text-xs text-gray-500 border-t border-gray-100 pt-2 space-y-0.5">
-                {entry.exampleSentence1 && (
-                  <p className="font-medium text-gray-600">{entry.exampleSentence1}</p>
-                )}
-                {entry.exampleSentence1English && (
-                  <p>{entry.exampleSentence1English}</p>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

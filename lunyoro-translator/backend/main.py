@@ -53,6 +53,7 @@ class TranslateRequest(BaseModel):
 
 class WordLookupRequest(BaseModel):
     word: str
+    direction: str = "en→lun"
 
 class SpellCheckRequest(BaseModel):
     text: str
@@ -103,7 +104,7 @@ def translate_reverse(req: TranslateRequest):
 def word_lookup(req: WordLookupRequest):
     if not req.word.strip():
         raise HTTPException(status_code=400, detail="Word cannot be empty")
-    results = lookup_word(req.word)
+    results = lookup_word(req.word, req.direction)
     return {"word": req.word, "results": results}
 
 
