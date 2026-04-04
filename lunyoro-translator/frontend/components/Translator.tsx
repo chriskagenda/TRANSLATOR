@@ -34,6 +34,7 @@ export default function Translator() {
   const [direction, setDirection] = useState<Direction>("en→lun");
   const [misspelled, setMisspelled] = useState<Misspelled[]>([]);
   const [tooltip, setTooltip] = useState<{ word: string; suggestions: string[]; x: number; y: number } | null>(null);
+  const [ignored, setIgnored] = useState<Set<string>>(new Set());
 
   const spellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -51,6 +52,7 @@ export default function Translator() {
     setError("");
     setMisspelled([]);
     setTooltip(null);
+    setIgnored(new Set());
   }
 
   // ── spellcheck ───────────────────────────────────────────────────────────────
@@ -63,11 +65,21 @@ export default function Translator() {
         body: JSON.stringify({ text }),
       });
       const data = await res.json();
-      setMisspelled(data.misspelled || []);
+      setMisspelled((data.misspelled || []).filter((m: Misspelled) => !ignored.has(m.word.toLowerCase())));
     } catch {
       setMisspelled([]);
     }
-  }, []);
+  }, [ignored]);
+
+  function ignoreWord(word: string) {
+    const lower = word.toLowerCase();
+    setIgnored((prev) => new Set([...prev, lower]));
+    setMisspelled((prev) => prev.filter((m) => m.word.toLowerCase() !== lower));
+    if (editorRef.current) {
+      editorRef.current.innerHTML = buildHtml(input);
+    }
+    setTooltip(null);
+  }
 
   useEffect(() => {
     if (direction !== "lun→en") { setMisspelled([]); return; }
@@ -274,7 +286,7 @@ export default function Translator() {
                 key={s}
                 className="block w-full text-left text-blue-600 hover:bg-blue-50 active:bg-blue-100 px-2 py-1.5 rounded text-sm cursor-pointer"
                 onMouseDown={(e) => {
-                  e.preventDefault(); // prevent editor blur before click lands
+                  e.preventDefault();
                   applySuggestion(tooltip.word, s);
                 }}
               >
@@ -284,6 +296,17 @@ export default function Translator() {
           ) : (
             <p className="text-gray-400 italic text-xs">No suggestions</p>
           )}
+          <div className="border-t border-gray-100 mt-1.5 pt-1.5">
+            <button
+              className="block w-full text-left text-gray-400 hover:bg-gray-50 active:bg-gray-100 px-2 py-1.5 rounded text-xs cursor-pointer"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                ignoreWord(tooltip.word);
+              }}
+            >
+              Ignore
+            </button>
+          </div>
         </div>
       )}
 

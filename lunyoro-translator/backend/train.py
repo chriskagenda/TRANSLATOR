@@ -25,13 +25,20 @@ def build_index():
     model = SentenceTransformer(MODEL_NAME)
 
     english_sentences = pairs["english"].tolist()
+    lunyoro_sentences = pairs["lunyoro"].tolist()
+
+    print(f"Encoding {len(pairs)} English sentences...")
     embeddings = model.encode(english_sentences, show_progress_bar=True, batch_size=64)
+
+    print(f"Encoding {len(pairs)} Lunyoro sentences...")
+    lunyoro_embeddings = model.encode(lunyoro_sentences, show_progress_bar=True, batch_size=64)
 
     index = {
         "model_name": MODEL_NAME,
         "english_sentences": english_sentences,
-        "lunyoro_sentences": pairs["lunyoro"].tolist(),
+        "lunyoro_sentences": lunyoro_sentences,
         "embeddings": embeddings,
+        "lunyoro_embeddings": lunyoro_embeddings,
         "dictionary": dictionary.to_dict(orient="records"),
     }
 

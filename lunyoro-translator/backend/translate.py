@@ -20,10 +20,11 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 # ── cached singletons ────────────────────────────────────────────────────────
-_index      = None
-_sem_model  = None
-_dictionary = None
+_index        = None
+_sem_model    = None
+_dictionary   = None
 _corpus_vocab = None
+_dict_word_map: dict = {}   # lowercase word → entry, for O(1) lookup
 
 _mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
 _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
@@ -32,17 +33,25 @@ _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
 # ── loaders ──────────────────────────────────────────────────────────────────
 
 def _load_retrieval():
-    global _index, _sem_model, _dictionary, _corpus_vocab
+    global _index, _sem_model, _dictionary, _corpus_vocab, _dict_word_map
     if _index is not None:
         return
     if not os.path.exists(INDEX_PATH):
         raise FileNotFoundError("Translation index not found. Run train.py first.")
     with open(INDEX_PATH, "rb") as f:
         _index = pickle.load(f)
-    # Load from local copy first; fall back to cached name if local copy missing
     sem_path = SEM_MODEL_DIR if os.path.isdir(SEM_MODEL_DIR) else _index["model_name"]
     _sem_model  = SentenceTransformer(sem_path)
     _dictionary = _index["dictionary"]
+    # build O(1) lookup map
+    _dict_word_map = {d["word"].lower(): d for d in _dictionary}
+    # also map by lowercased definitionEnglish for en→lun searches
+    _dict_def_map: dict = {}
+    for d in _dictionary:
+        key = (d.get("definitionEnglish") or "").lower()
+        if key:
+            _dict_def_map[key] = d
+    _index["_dict_def_map"] = _dict_def_map
 
 
 def _load_mt(direction: str):
@@ -303,27 +312,84 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
         })
 
     # ── 4. Fuzzy match against dictionary with POS boosting ─────────────────
-    dict_words = [d["word"] for d in _dictionary]
+    if direction == "en→lun":
+        # Search by English definition — much more accurate than matching Lunyoro word strings
+        dict_search_keys = [
+            (d["word"], (d.get("definitionEnglish") or "").lower())
+            for d in _dictionary
+        ]
+        # exact / substring match on definition first
+        exact_matches = [
+            (d, 100) for d in _dictionary
+            if word_lower == (d.get("definitionEnglish") or "").lower().strip()
+            or word_lower in (d.get("definitionEnglish") or "").lower().split()
+        ]
+        fuzzy_def_matches = process.extract(
+            word_lower,
+            [key for _, key in dict_search_keys],
+            scorer=fuzz.token_sort_ratio,
+            limit=10,
+            score_cutoff=65,
+        )
+        fuzzy_matches = []
+        for match in fuzzy_def_matches:
+            entry = _index["_dict_def_map"].get(match[0])
+            if entry:
+                fuzzy_matches.append((entry, match[1]))
+        # prepend exact matches
+        for d, score in exact_matches:
+            if d not in [e for e, _ in fuzzy_matches]:
+                fuzzy_matches.insert(0, (d, score))
+    else:
+        # lun→en: match on the Lunyoro word itself — exact, substring, then fuzzy
+        dict_words = [d["word"] for d in _dictionary]
 
-    fuzzy_matches = process.extract(word_lower, [w.lower() for w in dict_words],
-                                    scorer=fuzz.partial_ratio, limit=10, score_cutoff=60)
+        # exact and substring matches first
+        exact_lun = [
+            (d, 100) for d in _dictionary
+            if word_lower == d["word"].lower()
+            or word_lower in d["word"].lower()
+            or d["word"].lower() in word_lower
+        ]
 
-    if mt_translation:
-        mt_matches = process.extract(mt_translation.lower(), [w.lower() for w in dict_words],
-                                     scorer=fuzz.partial_ratio, limit=5, score_cutoff=60)
-        fuzzy_matches = list({m[0]: m for m in fuzzy_matches + mt_matches}.values())
+        raw_matches = process.extract(
+            word_lower,
+            [w.lower() for w in dict_words],
+            scorer=fuzz.token_sort_ratio,
+            limit=10,
+            score_cutoff=65,
+        )
+        fuzzy_matches = list(exact_lun)
+        seen_fm = {d["word"] for d, _ in exact_lun}
+        for match in raw_matches:
+            entry = _dict_word_map.get(match[0])
+            if entry and entry["word"] not in seen_fm:
+                seen_fm.add(entry["word"])
+                fuzzy_matches.append((entry, match[1]))
+
+        # also search MT translation against definitions
+        if mt_translation:
+            mt_def_matches = process.extract(
+                mt_translation.lower(),
+                [(d.get("definitionEnglish") or "").lower() for d in _dictionary],
+                scorer=fuzz.token_sort_ratio,
+                limit=5,
+                score_cutoff=65,
+            )
+            for match in mt_def_matches:
+                entry = _index["_dict_def_map"].get(match[0])
+                if entry and entry not in [e for e, _ in fuzzy_matches]:
+                    fuzzy_matches.append((entry, match[1]))
 
     dict_results = []
-    for match in fuzzy_matches:
-        entry = next((d for d in _dictionary if d["word"].lower() == match[0]), None)
-        if not entry or entry["word"] in seen_words:
+    for entry, score in fuzzy_matches:
+        if entry["word"] in seen_words:
             continue
         seen_words.add(entry["word"])
 
-        base_score = match[1] / 100.0
+        base_score = score / 100.0
         entry_pos = (entry.get("pos") or "").strip().upper()
 
-        # POS boost: +0.15 for exact match, +0.05 for related (e.g. N↔ADJ)
         pos_boost = 0.0
         if inferred_pos and entry_pos:
             if entry_pos == inferred_pos:
@@ -339,7 +405,6 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             "pos_matched": entry_pos == inferred_pos if inferred_pos and entry_pos else False,
         })
 
-    # Sort: POS-matched entries first, then by confidence
     dict_results.sort(key=lambda x: (-int(x.get("pos_matched", False)), -x["confidence"]))
 
     # ── 5. Exact / substring fallback ───────────────────────────────────────
@@ -347,16 +412,20 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
         w = entry["word"]
         if w in seen_words:
             continue
-        if (w.lower() == word_lower
-                or word_lower in w.lower()
-                or word_lower in (entry.get("definitionEnglish") or "").lower()):
+        def_en = (entry.get("definitionEnglish") or "").lower()
+        lun_word = w.lower()
+        match = (
+            (direction == "en→lun" and (def_en == word_lower or word_lower in def_en.split()))
+            or (direction == "lun→en" and (lun_word == word_lower or word_lower in lun_word))
+        )
+        if match:
             seen_words.add(w)
             entry_pos = (entry.get("pos") or "").strip().upper()
             pos_boost = 0.15 if (inferred_pos and entry_pos == inferred_pos) else 0.0
             dict_results.append({
                 **entry,
                 "source": "dictionary",
-                "confidence": round(min(1.0 + pos_boost, 1.0), 3),
+                "confidence": 1.0,
                 "pos_matched": entry_pos == inferred_pos if inferred_pos else False,
             })
 
@@ -364,9 +433,7 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
     if mt_translation:
         # Find a dictionary entry that matches the MT output for POS/definition context
         mt_lower = mt_translation.lower()
-        mt_dict_entry = next(
-            (d for d in _dictionary if d["word"].lower() == mt_lower), None
-        )
+        mt_dict_entry = _dict_word_map.get(mt_lower)
         results.append({
             "word": mt_translation if direction == "en→lun" else word,
             "definitionEnglish": word if direction == "en→lun" else mt_translation,
