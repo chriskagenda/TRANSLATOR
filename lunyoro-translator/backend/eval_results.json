@@ -1,0 +1,46 @@
+[
+  {
+    "direction": "en2lun",
+    "split": "val",
+    "samples": 426,
+    "bleu": 10.13,
+    "exact_match_pct": 1.17,
+    "token_precision": 26.95,
+    "token_recall": 26.28,
+    "token_f1": 26.16,
+    "inference_ms_per_sample": 426.7
+  },
+  {
+    "direction": "en2lun",
+    "split": "test",
+    "samples": 427,
+    "bleu": 9.37,
+    "exact_match_pct": 0.94,
+    "token_precision": 26.69,
+    "token_recall": 26.38,
+    "token_f1": 26.16,
+    "inference_ms_per_sample": 464.9
+  },
+  {
+    "direction": "lun2en",
+    "split": "val",
+    "samples": 426,
+    "bleu": 18.71,
+    "exact_match_pct": 0.94,
+    "token_precision": 39.55,
+    "token_recall": 37.62,
+    "token_f1": 37.69,
+    "inference_ms_per_sample": 336.9
+  },
+  {
+    "direction": "lun2en",
+    "split": "test",
+    "samples": 427,
+    "bleu": 16.84,
+    "exact_match_pct": 0.94,
+    "token_precision": 39.21,
+    "token_recall": 36.08,
+    "token_f1": 36.81,
+    "inference_ms_per_sample": 329.8
+  }
+]
