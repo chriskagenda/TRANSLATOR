@@ -3,6 +3,7 @@ Builds a unified, augmented parallel corpus from:
   1. english_nyoro_clean.csv  (6 200 sentence pairs)
   2. Dictionary example sentences (≈2 284 pairs)
   3. Word-level definition pairs  (1 142 pairs)
+  4. Any extra CSVs placed in data/extra/ with columns: english, lunyoro
 
 Outputs:
   data/training/train.csv
@@ -40,6 +41,23 @@ def build_corpus() -> pd.DataFrame:
     )
 
     corpus = pd.concat([pairs, ex1, ex2, word_pairs], ignore_index=True)
+
+    # 4. Any extra datasets dropped into data/extra/
+    extra_dir = os.path.join(DATA_DIR, "extra")
+    if os.path.isdir(extra_dir):
+        for fname in os.listdir(extra_dir):
+            if fname.endswith(".csv"):
+                fpath = os.path.join(extra_dir, fname)
+                try:
+                    extra = pd.read_csv(fpath).rename(columns=str.lower)
+                    if "english" in extra.columns and "lunyoro" in extra.columns:
+                        extra = extra[["english", "lunyoro"]].dropna()
+                        corpus = pd.concat([corpus, extra], ignore_index=True)
+                        print(f"  Loaded extra dataset: {fname} ({len(extra)} pairs)")
+                    else:
+                        print(f"  Skipped {fname} — needs 'english' and 'lunyoro' columns")
+                except Exception as e:
+                    print(f"  Skipped {fname} — {e}")
 
     # Basic quality filters
     corpus["english"] = corpus["english"].str.strip()
