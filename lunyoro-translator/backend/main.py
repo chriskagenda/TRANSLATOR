@@ -18,12 +18,13 @@ app = FastAPI(title="Lunyoro/Rutooro Translator API")
 
 @app.on_event("startup")
 def preload_model():
-    """Load retrieval index and neural MT models at startup."""
+    """Load retrieval index and all neural MT models at startup."""
     get_index_and_model()
-    # preload fine-tuned MT models so first request is instant
-    from translate import _load_mt
+    from translate import _load_mt, _load_nllb
     _load_mt("en2lun")
     _load_mt("lun2en")
+    _load_nllb("en2lun")
+    _load_nllb("lun2en")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +50,7 @@ def save_history(entry: dict):
 
 class TranslateRequest(BaseModel):
     text: str
+    context: str = ""  # optional previous sentence for context-aware translation
 
 
 class WordLookupRequest(BaseModel):
@@ -70,7 +72,7 @@ def translate_text(req: TranslateRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty")
     if len(req.text) > 1000:
         raise HTTPException(status_code=400, detail="Text too long (max 1000 chars)")
-    result = translate(req.text)
+    result = translate(req.text, context=req.context)
     save_history({
         "input": req.text,
         "direction": "en→lun",
@@ -88,7 +90,7 @@ def translate_reverse(req: TranslateRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty")
     if len(req.text) > 1000:
         raise HTTPException(status_code=400, detail="Text too long (max 1000 chars)")
-    result = translate_to_english(req.text)
+    result = translate_to_english(req.text, context=req.context)
     save_history({
         "input": req.text,
         "direction": "lun→en",

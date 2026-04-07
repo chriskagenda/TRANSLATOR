@@ -20,9 +20,30 @@ OUT_DIR   = os.path.join(DATA_DIR, "training")
 
 
 def build_corpus() -> pd.DataFrame:
-    # 1. Main sentence pairs
+    # 1. Main sentence pairs — detect domain from content
     pairs = pd.read_csv(os.path.join(CLEAN_DIR, "english_nyoro_clean.csv"))
     pairs = pairs[["english", "lunyoro"]].copy()
+
+    # Tag domains based on keywords
+    def tag_domain(text: str) -> str:
+        t = text.lower()
+        if any(w in t for w in ["god", "lord", "jesus", "christ", "pray", "church", "bible", "holy", "spirit", "gospel", "psalm", "disciple", "apostle", "prophet"]):
+            return "RELIGIOUS"
+        if any(w in t for w in ["hospital", "doctor", "medicine", "disease", "health", "patient", "nurse", "clinic", "treatment", "symptom"]):
+            return "MEDICAL"
+        if any(w in t for w in ["school", "teacher", "student", "learn", "education", "class", "university", "college", "study"]):
+            return "EDUCATION"
+        if any(w in t for w in ["government", "law", "court", "police", "president", "minister", "parliament", "election", "vote"]):
+            return "GOVERNMENT"
+        if any(w in t for w in ["farm", "crop", "harvest", "soil", "plant", "animal", "cattle", "agriculture"]):
+            return "AGRICULTURE"
+        return "GENERAL"
+
+    pairs["domain"] = pairs["english"].apply(tag_domain)
+
+    # Prepend domain tag to source sentence
+    pairs["english"] = "[" + pairs["domain"] + "] " + pairs["english"]
+    pairs = pairs[["english", "lunyoro"]]
 
     # 2. Dictionary example sentences
     d = pd.read_csv(os.path.join(CLEAN_DIR, "word_entries_clean.csv")).fillna("")

@@ -28,6 +28,11 @@ _dict_word_map: dict = {}   # lowercase word → entry, for O(1) lookup
 
 _mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
 _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
+_nllb_models   = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
+_nllb_available = {}  # {"en2lun": bool, "lun2en": bool}
+
+NLLB_LANG_EN  = "eng_Latn"
+NLLB_LANG_LUN = "lug_Latn"
 
 
 # ── loaders ──────────────────────────────────────────────────────────────────
@@ -82,18 +87,80 @@ def _load_mt(direction: str):
         return False
 
 
-def _mt_translate(text: str, direction: str) -> str | None:
-    """Run inference with a fine-tuned MarianMT model."""
+def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
+    """Run inference with a fine-tuned MarianMT model.
+    Optionally prepend a context sentence separated by ' ||| '.
+    """
     if not _load_mt(direction):
         return None
     import torch
     tokenizer, model, device = _mt_models[direction]
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(device)
+    input_text = f"{context} ||| {text}" if context else text
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
             num_beams=4,
-            max_length=256,
+            max_length=512,
+            early_stopping=True,
+        )
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+
+def _load_nllb(direction: str) -> bool:
+    """Lazy-load a fine-tuned NLLB model. Returns True if available."""
+    if direction in _nllb_available:
+        return _nllb_available[direction]
+
+    path = os.path.join(MODEL_DIR, f"nllb_{direction}")
+    if not os.path.isdir(path):
+        _nllb_available[direction] = False
+        return False
+
+    try:
+        from transformers import NllbTokenizer, AutoModelForSeq2SeqLM
+        import torch
+        tokenizer = NllbTokenizer.from_pretrained(path)
+        model = AutoModelForSeq2SeqLM.from_pretrained(path)
+        model.eval()
+        # pin to GPU 1 if available, else GPU 0, else CPU
+        if torch.cuda.device_count() >= 2:
+            device = "cuda:1"
+        elif torch.cuda.is_available():
+            device = "cuda:0"
+        else:
+            device = "cpu"
+        model.to(device)
+        _nllb_models[direction] = (tokenizer, model, device)
+        _nllb_available[direction] = True
+        print(f"[translate] Loaded NLLB model: {direction} on {device}")
+        return True
+    except Exception as e:
+        print(f"[translate] Could not load NLLB {direction}: {e}")
+        _nllb_available[direction] = False
+        return False
+
+
+def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
+    """Run inference with a fine-tuned NLLB model.
+    Optionally prepend a context sentence separated by ' ||| '.
+    """
+    if not _load_nllb(direction):
+        return None
+    import torch
+    tokenizer, model, device = _nllb_models[direction]
+    src_lang = NLLB_LANG_EN  if direction == "en2lun" else NLLB_LANG_LUN
+    tgt_lang = NLLB_LANG_LUN if direction == "en2lun" else NLLB_LANG_EN
+    tokenizer.src_lang = src_lang
+    input_text = f"{context} ||| {text}" if context else text
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
+    forced_bos = tokenizer.convert_tokens_to_ids(tgt_lang)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            forced_bos_token_id=forced_bos,
+            num_beams=4,
+            max_length=512,
             early_stopping=True,
         )
     return tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -101,18 +168,21 @@ def _mt_translate(text: str, direction: str) -> str | None:
 
 # ── public API ───────────────────────────────────────────────────────────────
 
-def translate(text: str, top_k: int = 3) -> dict:
-    """English → Lunyoro/Rutooro"""
+def translate(text: str, top_k: int = 3, context: str = "") -> dict:
+    """English → Lunyoro/Rutooro — uses both MarianMT and NLLB if available."""
     text = text.strip()
 
-    # 1. Fine-tuned model (best quality)
-    mt_result = _mt_translate(text, "en2lun")
-    if mt_result:
+    marian = _mt_translate(text, "en2lun", context=context)
+    nllb   = _nllb_translate(text, "en2lun", context=context)
+
+    if marian or nllb:
         return {
-            "translation": mt_result,
-            "method":      "neural_mt",
-            "confidence":  1.0,
-            "alternatives": [],
+            "translation":       marian or nllb,
+            "translation_nllb":  nllb,
+            "translation_marian": marian,
+            "method":            "neural_mt",
+            "confidence":        1.0,
+            "alternatives":      [],
         }
 
     # 2. Retrieval fallback
@@ -128,7 +198,7 @@ def translate(text: str, top_k: int = 3) -> dict:
                     "confidence": 1.0, "alternatives": []}
 
     # semantic similarity
-    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    q_emb   = _sem_model.encode(text, convert_to_numpy=True)
     scores  = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
     top_idx = np.argsort(scores)[::-1][:top_k]
     best, best_score = top_idx[0], float(scores[top_idx[0]])
@@ -145,18 +215,21 @@ def translate(text: str, top_k: int = 3) -> dict:
     return _dict_fallback(text, best_score, english_sentences[best], alternatives, "en→lun")
 
 
-def translate_to_english(text: str, top_k: int = 3) -> dict:
-    """Lunyoro/Rutooro → English"""
+def translate_to_english(text: str, top_k: int = 3, context: str = "") -> dict:
+    """Lunyoro/Rutooro → English — uses both MarianMT and NLLB if available."""
     text = text.strip()
 
-    # 1. Fine-tuned model
-    mt_result = _mt_translate(text, "lun2en")
-    if mt_result:
+    marian = _mt_translate(text, "lun2en", context=context)
+    nllb   = _nllb_translate(text, "lun2en", context=context)
+
+    if marian or nllb:
         return {
-            "translation": mt_result,
-            "method":      "neural_mt",
-            "confidence":  1.0,
-            "alternatives": [],
+            "translation":        marian or nllb,
+            "translation_nllb":   nllb,
+            "translation_marian": marian,
+            "method":             "neural_mt",
+            "confidence":         1.0,
+            "alternatives":       [],
         }
 
     # 2. Retrieval fallback
@@ -172,10 +245,10 @@ def translate_to_english(text: str, top_k: int = 3) -> dict:
 
     if "lunyoro_embeddings" not in _index:
         _index["lunyoro_embeddings"] = _sem_model.encode(
-            lunyoro_sentences, show_progress_bar=False, batch_size=64
+            lunyoro_sentences, show_progress_bar=False, batch_size=64, convert_to_numpy=True
         )
 
-    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    q_emb   = _sem_model.encode(text, convert_to_numpy=True)
     scores  = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
     top_idx = np.argsort(scores)[::-1][:top_k]
     best, best_score = top_idx[0], float(scores[top_idx[0]])
@@ -282,14 +355,14 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             inferred_pos = "ADJ"
 
     # ── 3. Semantic search against corpus ───────────────────────────────────
-    q_emb = _sem_model.encode(word, convert_to_tensor=True)
+    q_emb = _sem_model.encode(word, convert_to_numpy=True)
 
     if direction == "en→lun":
         scores = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
     else:
         if "lunyoro_embeddings" not in _index:
             _index["lunyoro_embeddings"] = _sem_model.encode(
-                _index["lunyoro_sentences"], show_progress_bar=False, batch_size=64
+                _index["lunyoro_sentences"], show_progress_bar=False, batch_size=64, convert_to_numpy=True
             )
         scores = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
 
