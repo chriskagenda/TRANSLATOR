@@ -82,6 +82,19 @@ if not all_ok:
 """)
     sys.exit(1)
 
+# 5. Download NLLB models from HuggingFace if not present
+print("\nChecking NLLB models...")
+run(f"{sys.executable} -m pip install huggingface_hub -q")
+for direction, repo in [("nllb_en2lun", "chriskagenda/lunyoro-nllb_en2lun"),
+                         ("nllb_lun2en", "chriskagenda/lunyoro-nllb_lun2en")]:
+    safetensors = os.path.join(BASE, "model", direction, "model.safetensors")
+    if not os.path.exists(safetensors) or os.path.getsize(safetensors) < 1000:
+        print(f"  Downloading {direction} from HuggingFace...")
+        run(f"{sys.executable} -c \"from huggingface_hub import snapshot_download; "
+            f"snapshot_download(repo_id='{repo}', local_dir='model/{direction}')\"")
+    else:
+        print(f"  ✓ {direction} model")
+
 print("\n✓ All model files present. No training needed.")
 print("""
 ==============================================

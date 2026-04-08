@@ -12,6 +12,8 @@ interface Misspelled {
 
 interface TranslationResult {
   translation: string | null;
+  translation_nllb?: string | null;
+  translation_marian?: string | null;
   method: string;
   confidence: number;
   matched_english?: string;
@@ -195,11 +197,15 @@ export default function Translator() {
     setLoading(true);
     setError("");
     setResult(null);
+
+    // Build context from the last translation result for context-aware translation
+    const context = result?.translation || "";
+
     try {
       const res = await fetch(`${API}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, context }),
       });
       if (!res.ok) throw new Error();
       setResult(await res.json());
@@ -338,6 +344,14 @@ export default function Translator() {
             }
             {matchedValue && result.method !== "exact_match" && (
               <p className="text-xs text-gray-400 mt-2">{matchedLabel}: &quot;{matchedValue}&quot;</p>
+            )}
+            {/* Show both model outputs if available */}
+            {result.translation_marian && result.translation_nllb && (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
+                <p className="text-xs text-gray-400 font-medium">Model comparison:</p>
+                <p className="text-xs text-gray-600"><span className="font-medium">MarianMT:</span> {result.translation_marian}</p>
+                <p className="text-xs text-gray-600"><span className="font-medium">NLLB-200:</span> {result.translation_nllb}</p>
+              </div>
             )}
           </div>
 

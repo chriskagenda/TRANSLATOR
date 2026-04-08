@@ -117,8 +117,13 @@ export default function Dictionary() {
         </button>
       </div>
 
+<<<<<<< HEAD
       {/* POS filter tabs — only shown when results exist */}
       {results.length > 0 && (
+=======
+      {/* POS filter tabs — only shown when results exist */}
+      {results.length > 0 && (
+>>>>>>> c8dd9fbe1fd4990b1d87b83fb1111a54e49edde7
         <div className="flex gap-1.5 flex-wrap">
           {(["ALL", "N", "V", "ADJ"] as PosFilter[]).map((p) => {
             const info = p === "ALL" ? null : POS_LABELS[p];
@@ -150,6 +155,12 @@ export default function Dictionary() {
       )}
 
       <div className="space-y-3">
+<<<<<<< HEAD
+=======
+        {results.length > 0 && (
+          <p className="text-xs text-gray-400 font-medium">Best match</p>
+        )}
+>>>>>>> c8dd9fbe1fd4990b1d87b83fb1111a54e49edde7
         {filtered.map((entry, i) => {
           const posKey = (entry.pos || "").toUpperCase();
           const posInfo = POS_LABELS[posKey];

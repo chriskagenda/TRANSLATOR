@@ -3,6 +3,7 @@ Builds a unified, augmented parallel corpus from:
   1. english_nyoro_clean.csv  (6 200 sentence pairs)
   2. Dictionary example sentences (≈2 284 pairs)
   3. Word-level definition pairs  (1 142 pairs)
+  4. Any extra CSVs placed in data/extra/ with columns: english, lunyoro
 
 Outputs:
   data/training/train.csv
@@ -19,9 +20,30 @@ OUT_DIR   = os.path.join(DATA_DIR, "training")
 
 
 def build_corpus() -> pd.DataFrame:
-    # 1. Main sentence pairs
+    # 1. Main sentence pairs — detect domain from content
     pairs = pd.read_csv(os.path.join(CLEAN_DIR, "english_nyoro_clean.csv"))
     pairs = pairs[["english", "lunyoro"]].copy()
+
+    # Tag domains based on keywords
+    def tag_domain(text: str) -> str:
+        t = text.lower()
+        if any(w in t for w in ["god", "lord", "jesus", "christ", "pray", "church", "bible", "holy", "spirit", "gospel", "psalm", "disciple", "apostle", "prophet"]):
+            return "RELIGIOUS"
+        if any(w in t for w in ["hospital", "doctor", "medicine", "disease", "health", "patient", "nurse", "clinic", "treatment", "symptom"]):
+            return "MEDICAL"
+        if any(w in t for w in ["school", "teacher", "student", "learn", "education", "class", "university", "college", "study"]):
+            return "EDUCATION"
+        if any(w in t for w in ["government", "law", "court", "police", "president", "minister", "parliament", "election", "vote"]):
+            return "GOVERNMENT"
+        if any(w in t for w in ["farm", "crop", "harvest", "soil", "plant", "animal", "cattle", "agriculture"]):
+            return "AGRICULTURE"
+        return "GENERAL"
+
+    pairs["domain"] = pairs["english"].apply(tag_domain)
+
+    # Prepend domain tag to source sentence
+    pairs["english"] = "[" + pairs["domain"] + "] " + pairs["english"]
+    pairs = pairs[["english", "lunyoro"]]
 
     # 2. Dictionary example sentences
     d = pd.read_csv(os.path.join(CLEAN_DIR, "word_entries_clean.csv")).fillna("")
@@ -40,6 +62,23 @@ def build_corpus() -> pd.DataFrame:
     )
 
     corpus = pd.concat([pairs, ex1, ex2, word_pairs], ignore_index=True)
+
+    # 4. Any extra datasets dropped into data/extra/
+    extra_dir = os.path.join(DATA_DIR, "extra")
+    if os.path.isdir(extra_dir):
+        for fname in os.listdir(extra_dir):
+            if fname.endswith(".csv"):
+                fpath = os.path.join(extra_dir, fname)
+                try:
+                    extra = pd.read_csv(fpath).rename(columns=str.lower)
+                    if "english" in extra.columns and "lunyoro" in extra.columns:
+                        extra = extra[["english", "lunyoro"]].dropna()
+                        corpus = pd.concat([corpus, extra], ignore_index=True)
+                        print(f"  Loaded extra dataset: {fname} ({len(extra)} pairs)")
+                    else:
+                        print(f"  Skipped {fname} — needs 'english' and 'lunyoro' columns")
+                except Exception as e:
+                    print(f"  Skipped {fname} — {e}")
 
     # Basic quality filters
     corpus["english"] = corpus["english"].str.strip()

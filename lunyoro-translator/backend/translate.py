@@ -43,6 +43,11 @@ _dict_word_map: dict = {}   # lowercase word → entry, for O(1) lookup
 
 _mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
 _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
+_nllb_models   = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
+_nllb_available = {}  # {"en2lun": bool, "lun2en": bool}
+
+NLLB_LANG_EN  = "eng_Latn"
+NLLB_LANG_LUN = "lug_Latn"
 
 
 # ── loaders ──────────────────────────────────────────────────────────────────
@@ -97,18 +102,77 @@ def _load_mt(direction: str):
         return False
 
 
-def _mt_translate(text: str, direction: str) -> str | None:
-    """Run inference with a fine-tuned MarianMT model."""
+def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
+    """Run inference with a fine-tuned MarianMT model.
+    Optionally prepend a context sentence separated by ' ||| '.
+    """
     if not _load_mt(direction):
         return None
     import torch
     tokenizer, model, device = _mt_models[direction]
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(device)
+    input_text = f"{context} ||| {text}" if context else text
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
             num_beams=4,
-            max_length=256,
+            max_length=512,
+            early_stopping=True,
+        )
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+
+def _load_nllb(direction: str) -> bool:
+    """Lazy-load a fine-tuned NLLB model. Returns True if available."""
+    if direction in _nllb_available:
+        return _nllb_available[direction]
+
+    path = os.path.join(MODEL_DIR, f"nllb_{direction}")
+    if not os.path.isdir(path):
+        _nllb_available[direction] = False
+        return False
+
+    try:
+        from transformers import NllbTokenizer, AutoModelForSeq2SeqLM
+        import torch
+        tokenizer = NllbTokenizer.from_pretrained(path)
+        model = AutoModelForSeq2SeqLM.from_pretrained(path)
+        model.eval()
+        if torch.cuda.device_count() >= 2:
+            device = "cuda:1"
+        elif torch.cuda.is_available():
+            device = "cuda:0"
+        else:
+            device = "cpu"
+        model.to(device)
+        _nllb_models[direction] = (tokenizer, model, device)
+        _nllb_available[direction] = True
+        print(f"[translate] Loaded NLLB model: {direction} on {device}")
+        return True
+    except Exception as e:
+        print(f"[translate] Could not load NLLB {direction}: {e}")
+        _nllb_available[direction] = False
+        return False
+
+
+def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
+    """Run inference with a fine-tuned NLLB model."""
+    if not _load_nllb(direction):
+        return None
+    import torch
+    tokenizer, model, device = _nllb_models[direction]
+    src_lang = NLLB_LANG_EN  if direction == "en2lun" else NLLB_LANG_LUN
+    tgt_lang = NLLB_LANG_LUN if direction == "en2lun" else NLLB_LANG_EN
+    tokenizer.src_lang = src_lang
+    input_text = f"{context} ||| {text}" if context else text
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
+    forced_bos = tokenizer.convert_tokens_to_ids(tgt_lang)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            forced_bos_token_id=forced_bos,
+            num_beams=4,
+            max_length=512,
             early_stopping=True,
         )
     return tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -116,18 +180,21 @@ def _mt_translate(text: str, direction: str) -> str | None:
 
 # ── public API ───────────────────────────────────────────────────────────────
 
-def translate(text: str, top_k: int = 3) -> dict:
-    """English → Lunyoro/Rutooro"""
+def translate(text: str, top_k: int = 3, context: str = "") -> dict:
+    """English → Lunyoro/Rutooro — uses both MarianMT and NLLB if available."""
     text = _normalise(text.strip())
 
-    # 1. Fine-tuned model (best quality)
-    mt_result = _mt_translate(text, "en2lun")
-    if mt_result:
+    marian = _mt_translate(text, "en2lun", context=context)
+    nllb   = _nllb_translate(text, "en2lun", context=context)
+
+    if marian or nllb:
         return {
-            "translation": mt_result,
-            "method":      "neural_mt",
-            "confidence":  1.0,
-            "alternatives": [],
+            "translation":        marian or nllb,
+            "translation_nllb":   nllb,
+            "translation_marian": marian,
+            "method":             "neural_mt",
+            "confidence":         1.0,
+            "alternatives":       [],
         }
 
     # 2. Retrieval fallback
@@ -135,15 +202,13 @@ def translate(text: str, top_k: int = 3) -> dict:
     english_sentences  = _index["english_sentences"]
     lunyoro_sentences  = _index["lunyoro_sentences"]
 
-    # exact match
     lower = text.lower()
     for i, sent in enumerate(english_sentences):
         if sent.lower() == lower:
             return {"translation": lunyoro_sentences[i], "method": "exact_match",
                     "confidence": 1.0, "alternatives": []}
 
-    # semantic similarity
-    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    q_emb   = _sem_model.encode(text, convert_to_numpy=True)
     scores  = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
     top_idx = np.argsort(scores)[::-1][:top_k]
     best, best_score = top_idx[0], float(scores[top_idx[0]])
@@ -156,25 +221,26 @@ def translate(text: str, top_k: int = 3) -> dict:
                 "confidence": round(best_score, 3),
                 "matched_english": english_sentences[best], "alternatives": alternatives}
 
-    # 3. Dictionary fallback
     return _dict_fallback(text, best_score, english_sentences[best], alternatives, "en→lun")
 
 
-def translate_to_english(text: str, top_k: int = 3) -> dict:
-    """Lunyoro/Rutooro → English"""
+def translate_to_english(text: str, top_k: int = 3, context: str = "") -> dict:
+    """Lunyoro/Rutooro → English — uses both MarianMT and NLLB if available."""
     text = _normalise(text.strip())
 
-    # 1. Fine-tuned model
-    mt_result = _mt_translate(text, "lun2en")
-    if mt_result:
+    marian = _mt_translate(text, "lun2en", context=context)
+    nllb   = _nllb_translate(text, "lun2en", context=context)
+
+    if marian or nllb:
         return {
-            "translation": mt_result,
-            "method":      "neural_mt",
-            "confidence":  1.0,
-            "alternatives": [],
+            "translation":        marian or nllb,
+            "translation_nllb":   nllb,
+            "translation_marian": marian,
+            "method":             "neural_mt",
+            "confidence":         1.0,
+            "alternatives":       [],
         }
 
-    # 2. Retrieval fallback
     _load_retrieval()
     english_sentences = _index["english_sentences"]
     lunyoro_sentences = _index["lunyoro_sentences"]
@@ -187,10 +253,10 @@ def translate_to_english(text: str, top_k: int = 3) -> dict:
 
     if "lunyoro_embeddings" not in _index:
         _index["lunyoro_embeddings"] = _sem_model.encode(
-            lunyoro_sentences, show_progress_bar=False, batch_size=64
+            lunyoro_sentences, show_progress_bar=False, batch_size=64, convert_to_numpy=True
         )
 
-    q_emb   = _sem_model.encode(text, convert_to_tensor=True)
+    q_emb   = _sem_model.encode(text, convert_to_numpy=True)
     scores  = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
     top_idx = np.argsort(scores)[::-1][:top_k]
     best, best_score = top_idx[0], float(scores[top_idx[0]])
@@ -248,15 +314,12 @@ def _infer_pos(word: str) -> str | None:
     Based on Bantu noun class and verb prefix patterns in the corpus.
     """
     w = word.lower().strip()
-    # Verb infinitives start with ok- / oku- / okw-
     if w.startswith(("oku", "okw", "ok-")):
         return "V"
-    # Noun class prefixes → N
     noun_prefixes = ("om", "ab", "ob", "eb", "ek", "ak", "en", "em", "in", "im",
                      "oru", "ama", "obu", "otu", "oku", "eri", "aga", "ege")
     if any(w.startswith(p) for p in noun_prefixes):
         return "N"
-    # Adjective-like prefixes (less reliable)
     if w.startswith(("nk", "ng", "mbi", "ndi", "nge")):
         return "ADJ"
     return None
@@ -265,10 +328,6 @@ def _infer_pos(word: str) -> str | None:
 def lookup_word(word: str, direction: str = "en→lun") -> list:
     """
     Dictionary lookup powered by MarianMT + semantic search + POS context.
-    1. Translate the query with MarianMT
-    2. Infer POS from query/translation to boost relevant entries
-    3. Semantic search against the corpus
-    4. Fuzzy match against dictionary, with POS-aware scoring
     """
     _load_retrieval()
     word = _normalise(word.strip())
@@ -276,16 +335,12 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
     results = []
     seen_words: set[str] = set()
 
-    # ── 1. MarianMT translation ──────────────────────────────────────────────
     mt_direction = "en2lun" if direction == "en→lun" else "lun2en"
     mt_translation = _mt_translate(word, mt_direction)
 
-    # ── 2. Infer POS from query and translation ──────────────────────────────
-    # For en→lun: infer from the Lunyoro translation; for lun→en: from the query
     lunyoro_side = mt_translation if direction == "en→lun" else word
     inferred_pos = _infer_pos(lunyoro_side) if lunyoro_side else None
 
-    # Also detect POS hints in English query (simple heuristics)
     en_side = word if direction == "en→lun" else (mt_translation or "")
     if not inferred_pos and en_side:
         en_lower = en_side.lower()
@@ -296,15 +351,14 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
         elif en_lower.endswith(("ful", "less", "ous", "ive", "al", "ic", "able", "ible")):
             inferred_pos = "ADJ"
 
-    # ── 3. Semantic search against corpus ───────────────────────────────────
-    q_emb = _sem_model.encode(word, convert_to_tensor=True)
+    q_emb = _sem_model.encode(word, convert_to_numpy=True)
 
     if direction == "en→lun":
         scores = util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
     else:
         if "lunyoro_embeddings" not in _index:
             _index["lunyoro_embeddings"] = _sem_model.encode(
-                _index["lunyoro_sentences"], show_progress_bar=False, batch_size=64
+                _index["lunyoro_sentences"], show_progress_bar=False, batch_size=64, convert_to_numpy=True
             )
         scores = util.cos_sim(q_emb, _index["lunyoro_embeddings"])[0].numpy()
 
@@ -326,14 +380,11 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             "confidence": round(score, 3),
         })
 
-    # ── 4. Fuzzy match against dictionary with POS boosting ─────────────────
     if direction == "en→lun":
-        # Search by English definition — much more accurate than matching Lunyoro word strings
         dict_search_keys = [
             (d["word"], (d.get("definitionEnglish") or "").lower())
             for d in _dictionary
         ]
-        # exact / substring match on definition first
         exact_matches = [
             (d, 100) for d in _dictionary
             if word_lower == (d.get("definitionEnglish") or "").lower().strip()
@@ -351,22 +402,17 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             entry = _index["_dict_def_map"].get(match[0])
             if entry:
                 fuzzy_matches.append((entry, match[1]))
-        # prepend exact matches
         for d, score in exact_matches:
             if d not in [e for e, _ in fuzzy_matches]:
                 fuzzy_matches.insert(0, (d, score))
     else:
-        # lun→en: match on the Lunyoro word itself — exact, substring, then fuzzy
         dict_words = [d["word"] for d in _dictionary]
-
-        # exact and substring matches first
         exact_lun = [
             (d, 100) for d in _dictionary
             if word_lower == d["word"].lower()
             or word_lower in d["word"].lower()
             or d["word"].lower() in word_lower
         ]
-
         raw_matches = process.extract(
             word_lower,
             [w.lower() for w in dict_words],
@@ -381,8 +427,6 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             if entry and entry["word"] not in seen_fm:
                 seen_fm.add(entry["word"])
                 fuzzy_matches.append((entry, match[1]))
-
-        # also search MT translation against definitions
         if mt_translation:
             mt_def_matches = process.extract(
                 mt_translation.lower(),
@@ -401,10 +445,8 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
         if entry["word"] in seen_words:
             continue
         seen_words.add(entry["word"])
-
         base_score = score / 100.0
         entry_pos = (entry.get("pos") or "").strip().upper()
-
         pos_boost = 0.0
         if inferred_pos and entry_pos:
             if entry_pos == inferred_pos:
@@ -412,7 +454,6 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
             elif (inferred_pos == "N" and entry_pos == "ADJ") or \
                  (inferred_pos == "ADJ" and entry_pos == "N"):
                 pos_boost = 0.05
-
         dict_results.append({
             **entry,
             "source": "dictionary",
@@ -422,7 +463,6 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
 
     dict_results.sort(key=lambda x: (-int(x.get("pos_matched", False)), -x["confidence"]))
 
-    # ── 5. Exact / substring fallback ───────────────────────────────────────
     for entry in _dictionary:
         w = entry["word"]
         if w in seen_words:
@@ -436,7 +476,6 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
         if match:
             seen_words.add(w)
             entry_pos = (entry.get("pos") or "").strip().upper()
-            pos_boost = 0.15 if (inferred_pos and entry_pos == inferred_pos) else 0.0
             dict_results.append({
                 **entry,
                 "source": "dictionary",
@@ -444,9 +483,7 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
                 "pos_matched": entry_pos == inferred_pos if inferred_pos else False,
             })
 
-    # ── 6. Build MT result — enrich with inferred POS ───────────────────────
     if mt_translation:
-        # Find a dictionary entry that matches the MT output for POS/definition context
         mt_lower = mt_translation.lower()
         mt_dict_entry = _dict_word_map.get(mt_lower)
         results.append({
@@ -465,6 +502,7 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
     results.extend(dict_results[:5])
     results.extend(corpus_hits[:3])
 
+    results.sort(key=lambda x: -x.get("confidence", 0))
     return results[:8]
 
 
@@ -474,37 +512,27 @@ def get_index_and_model():
 
 
 def _build_corpus_vocab() -> set:
-    """
-    Build a vocabulary of known Lunyoro/Rutooro words from:
-    1. The cleaned training corpus sentences (lunyoro_sentences from the index)
-    2. The MarianMT lun2en tokenizer vocabulary (SentencePiece surface forms)
-    3. The dictionary word list
-    """
-    import re
+    """Build vocabulary of known Lunyoro/Rutooro words from corpus, tokenizer, and dictionary."""
     _load_retrieval()
     known: set[str] = set()
 
-    # 1. All words from the cleaned corpus sentences
     for sent in _index["lunyoro_sentences"]:
         for w in re.findall(r"[a-zA-Z']+", sent):
             if len(w) >= 2:
                 known.add(w.lower())
 
-    # 2. MarianMT lun2en tokenizer vocab — surface forms that are real words
     lun2en_path = os.path.join(MODEL_DIR, "lun2en")
     if os.path.isdir(lun2en_path):
         try:
             from transformers import MarianTokenizer
             tok = MarianTokenizer.from_pretrained(lun2en_path)
             for token in tok.get_vocab().keys():
-                # strip sentencepiece prefix ▁ and keep only alphabetic tokens
                 clean = token.lstrip("▁").lower()
                 if clean.isalpha() and len(clean) >= 2:
                     known.add(clean)
         except Exception:
             pass
 
-    # 3. Dictionary words
     for d in _dictionary:
         if d.get("word"):
             known.add(d["word"].lower())
@@ -512,7 +540,6 @@ def _build_corpus_vocab() -> set:
     return known
 
 
-# cache the vocab so it's only built once
 _corpus_vocab: set | None = None
 
 
@@ -534,14 +561,12 @@ def spellcheck(text: str) -> list:
         if len(lower) < 3 or lower in _corpus_vocab:
             continue
 
-        # Check if the MarianMT lun2en model can encode it cleanly (known subwords)
         lun2en_path = os.path.join(MODEL_DIR, "lun2en")
         model_knows = False
         if os.path.isdir(lun2en_path) and _load_mt("lun2en"):
             try:
                 tokenizer, _, _ = _mt_models["lun2en"]
                 pieces = tokenizer.tokenize(lower)
-                # If encoded as a single piece (no UNK), the model recognises it
                 if pieces and "<unk>" not in pieces and len(pieces) == 1:
                     model_knows = True
             except Exception:
@@ -550,8 +575,6 @@ def spellcheck(text: str) -> list:
         if model_knows:
             continue
 
-        # Generate suggestions: fuzzy match against corpus vocab
-        # Prefer words that share the same prefix (common in Bantu languages)
         prefix = lower[:3]
         prefix_words = [w for w in vocab_list if w.startswith(prefix)]
         candidate_pool = prefix_words if len(prefix_words) >= 10 else vocab_list
@@ -562,7 +585,6 @@ def spellcheck(text: str) -> list:
             limit=5,
             score_cutoff=55,
         )
-        # deduplicate and take top 3
         seen: set[str] = set()
         top: list[str] = []
         for s in sorted(suggestions, key=lambda x: -x[1]):

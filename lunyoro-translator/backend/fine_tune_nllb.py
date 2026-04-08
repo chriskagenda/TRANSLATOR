@@ -1,15 +1,15 @@
 """
-Fine-tunes Helsinki-NLP/opus-mt-en-mul for English → Lunyoro/Rutooro
-and a reverse model for Lunyoro → English.
+Fine-tunes facebook/nllb-200-distilled-600M for Lunyoro/Rutooro translation.
+Assigns GPU 1 exclusively so MarianMT stays on GPU 0.
 
 Usage:
-    python fine_tune.py --direction en2lun   # English → Lunyoro
-    python fine_tune.py --direction lun2en   # Lunyoro → English
-    python fine_tune.py                      # trains both (default)
+    python fine_tune_nllb.py --direction en2lun
+    python fine_tune_nllb.py --direction lun2en
+    python fine_tune_nllb.py               # both (default)
 
 Models saved to:
-    model/en2lun/
-    model/lun2en/
+    model/nllb_en2lun/
+    model/nllb_lun2en/
 """
 import os
 import argparse
@@ -17,48 +17,60 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import (
-    MarianMTModel,
-    MarianTokenizer,
+    NllbTokenizer,
+    AutoModelForSeq2SeqLM,
     get_linear_schedule_with_warmup,
 )
 from torch.optim import AdamW
 
 DATA_DIR  = os.path.join(os.path.dirname(__file__), "data", "training")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
+BASE_MODEL = "facebook/nllb-200-distilled-600M"
 
-# Base models — opus-mt-en-mul covers English→many languages (good starting point)
-# For reverse we use opus-mt-mul-en
-BASE_MODELS = {
-    "en2lun": "Helsinki-NLP/opus-mt-en-mul",
-    "lun2en": "Helsinki-NLP/opus-mt-mul-en",
-}
+# NLLB language codes
+LANG_EN  = "eng_Latn"
+LANG_LUN = "lug_Latn"   # Luganda is the closest supported Bantu language to Lunyoro
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_GPUS = torch.cuda.device_count() if torch.cuda.is_available() else 0
+# Use both GPUs via DataParallel if available, else single GPU, else CPU
+if torch.cuda.device_count() >= 2:
+    DEVICE = torch.device("cuda:0")
+    USE_MULTI_GPU = True
+elif torch.cuda.is_available():
+    DEVICE = torch.device("cuda:0")
+    USE_MULTI_GPU = False
+else:
+    DEVICE = torch.device("cpu")
+    USE_MULTI_GPU = False
+
+print(f"NLLB will use: {torch.cuda.device_count()} GPU(s), DataParallel={USE_MULTI_GPU}")
 
 
-class TranslationDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, tokenizer: MarianTokenizer,
-                 src_col: str, tgt_col: str, max_len: int = 256):
+class NLLBDataset(Dataset):
+    def __init__(self, df: pd.DataFrame, tokenizer, src_col: str, tgt_col: str,
+                 src_lang: str, tgt_lang: str, max_len: int = 256):
         self.tokenizer = tokenizer
         self.src = df[src_col].tolist()
         self.tgt = df[tgt_col].tolist()
+        self.src_lang = src_lang
+        self.tgt_lang = tgt_lang
         self.max_len = max_len
 
     def __len__(self):
         return len(self.src)
 
     def __getitem__(self, idx):
+        self.tokenizer.src_lang = self.src_lang
         src_enc = self.tokenizer(
             self.src[idx], max_length=self.max_len,
             truncation=True, padding="max_length", return_tensors="pt"
         )
+        self.tokenizer.src_lang = self.tgt_lang
         tgt_enc = self.tokenizer(
-                text_target=self.tgt[idx], max_length=self.max_len,
-                truncation=True, padding="max_length", return_tensors="pt"
-            )
+            self.tgt[idx], max_length=self.max_len,
+            truncation=True, padding="max_length", return_tensors="pt"
+        )
         labels = tgt_enc["input_ids"].squeeze()
-        labels[labels == self.tokenizer.pad_token_id] = -100  # ignore padding in loss
+        labels[labels == self.tokenizer.pad_token_id] = -100
         return {
             "input_ids":      src_enc["input_ids"].squeeze(),
             "attention_mask": src_enc["attention_mask"].squeeze(),
@@ -66,45 +78,40 @@ class TranslationDataset(Dataset):
         }
 
 
-def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: float = 5e-5):
+def train_nllb(direction: str, epochs: int = 10, batch_size: int = 16, lr: float = 5e-5):
     print(f"\n{'='*60}")
-    print(f"Training direction: {direction}")
-    print(f"Device: {DEVICE}  |  GPUs: {NUM_GPUS}")
+    print(f"NLLB Training: {direction}  |  Device: {DEVICE}")
     print(f"{'='*60}")
 
-    base_model = BASE_MODELS[direction]
-    src_col = "english" if direction == "en2lun" else "lunyoro"
-    tgt_col = "lunyoro" if direction == "en2lun" else "english"
-    save_path = os.path.join(MODEL_DIR, direction)
+    src_col  = "english" if direction == "en2lun" else "lunyoro"
+    tgt_col  = "lunyoro" if direction == "en2lun" else "english"
+    src_lang = LANG_EN   if direction == "en2lun" else LANG_LUN
+    tgt_lang = LANG_LUN  if direction == "en2lun" else LANG_EN
+    save_path = os.path.join(MODEL_DIR, f"nllb_{direction}")
     os.makedirs(save_path, exist_ok=True)
 
-    # Load data
     train_df = pd.read_csv(os.path.join(DATA_DIR, "train.csv")).fillna("")
     val_df   = pd.read_csv(os.path.join(DATA_DIR, "val.csv")).fillna("")
-
     print(f"Train: {len(train_df)}  Val: {len(val_df)}")
 
-    # Load tokenizer and model
-    print(f"Loading base model: {base_model}")
-    tokenizer = MarianTokenizer.from_pretrained(base_model)
-    model = MarianMTModel.from_pretrained(base_model).to(DEVICE)
+    print(f"Loading {BASE_MODEL}...")
+    tokenizer = NllbTokenizer.from_pretrained(BASE_MODEL)
+    model = AutoModelForSeq2SeqLM.from_pretrained(BASE_MODEL).to(DEVICE)
 
-    # Use all available GPUs
-    if NUM_GPUS > 1:
-        print(f"Using {NUM_GPUS} GPUs with DataParallel")
+    if USE_MULTI_GPU:
+        print(f"Wrapping with DataParallel across {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
 
-    effective_batch = batch_size * max(NUM_GPUS, 1)
-    print(f"Effective batch size: {effective_batch} ({batch_size} x {max(NUM_GPUS,1)} GPUs)")
+    effective_batch = batch_size * (torch.cuda.device_count() if USE_MULTI_GPU else 1)
+    print(f"Effective batch size: {effective_batch}")
 
-    train_ds = TranslationDataset(train_df, tokenizer, src_col, tgt_col)
-    val_ds   = TranslationDataset(val_df,   tokenizer, src_col, tgt_col)
+    train_ds = NLLBDataset(train_df, tokenizer, src_col, tgt_col, src_lang, tgt_lang)
+    val_ds   = NLLBDataset(val_df,   tokenizer, src_col, tgt_col, src_lang, tgt_lang)
 
-    train_loader = DataLoader(train_ds, batch_size=effective_batch, shuffle=True,  num_workers=4, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   batch_size=effective_batch, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=effective_batch, shuffle=True,  num_workers=0, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=effective_batch, shuffle=False, num_workers=0, pin_memory=True)
 
-    # Unwrap model for optimizer (DataParallel wraps it)
-    raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+    raw_model = model.module if USE_MULTI_GPU else model
     optimizer = AdamW(raw_model.parameters(), lr=lr, weight_decay=0.01)
     total_steps = len(train_loader) * epochs
     scheduler = get_linear_schedule_with_warmup(
@@ -114,14 +121,12 @@ def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: 
     best_val_loss = float("inf")
 
     for epoch in range(1, epochs + 1):
-        # ── train ──
         model.train()
         train_loss = 0.0
         for batch in train_loader:
             batch = {k: v.to(DEVICE) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss
-            # DataParallel returns per-GPU losses as a tensor — mean to scalar
             if loss.dim() > 0:
                 loss = loss.mean()
             loss.backward()
@@ -130,10 +135,8 @@ def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: 
             scheduler.step()
             optimizer.zero_grad()
             train_loss += loss.item()
-
         train_loss /= len(train_loader)
 
-        # ── validate ──
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
@@ -145,29 +148,27 @@ def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: 
 
         print(f"Epoch {epoch}/{epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
 
-        # Save best checkpoint — always save the unwrapped model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+            raw_model = model.module if USE_MULTI_GPU else model
             raw_model.save_pretrained(save_path)
             tokenizer.save_pretrained(save_path)
             print(f"  ✓ Saved best model (val_loss={val_loss:.4f}) → {save_path}")
 
     print(f"\nDone. Best val_loss={best_val_loss:.4f}")
-    print(f"Model saved to: {save_path}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--direction", choices=["en2lun", "lun2en", "both"], default="both")
     parser.add_argument("--epochs",     type=int,   default=10)
-    parser.add_argument("--batch_size", type=int,   default=32)
+    parser.add_argument("--batch_size", type=int,   default=16)
     parser.add_argument("--lr",         type=float, default=5e-5)
     args = parser.parse_args()
 
     directions = ["en2lun", "lun2en"] if args.direction == "both" else [args.direction]
     for d in directions:
-        train_direction(d, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
+        train_nllb(d, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
 
 
 if __name__ == "__main__":
