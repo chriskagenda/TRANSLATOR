@@ -5,6 +5,8 @@ Translation logic:
 """
 import os
 import pickle
+import re
+import unicodedata
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
 from rapidfuzz import fuzz, process
@@ -18,6 +20,19 @@ SEM_MODEL_DIR = os.path.join(MODEL_DIR, "sem_model")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+_APOSTROPHE_MAP = str.maketrans({
+    "\u2018": "'", "\u2019": "'",
+    "\u201C": '"', "\u201D": '"',
+    "\u02BC": "'", "\u0060": "'",
+})
+
+
+def _normalise(text: str) -> str:
+    """NFC normalise + apostrophe standardisation for consistent matching."""
+    text = unicodedata.normalize("NFC", text)
+    return text.translate(_APOSTROPHE_MAP)
+
 
 # ── cached singletons ────────────────────────────────────────────────────────
 _index        = None
@@ -103,7 +118,7 @@ def _mt_translate(text: str, direction: str) -> str | None:
 
 def translate(text: str, top_k: int = 3) -> dict:
     """English → Lunyoro/Rutooro"""
-    text = text.strip()
+    text = _normalise(text.strip())
 
     # 1. Fine-tuned model (best quality)
     mt_result = _mt_translate(text, "en2lun")
@@ -147,7 +162,7 @@ def translate(text: str, top_k: int = 3) -> dict:
 
 def translate_to_english(text: str, top_k: int = 3) -> dict:
     """Lunyoro/Rutooro → English"""
-    text = text.strip()
+    text = _normalise(text.strip())
 
     # 1. Fine-tuned model
     mt_result = _mt_translate(text, "lun2en")
@@ -193,7 +208,7 @@ def translate_to_english(text: str, top_k: int = 3) -> dict:
 
 def _dict_fallback(text, best_score, matched_english, alternatives, direction):
     _load_retrieval()
-    words      = text.lower().split()
+    words      = re.findall(r"[a-zA-Z']+", text.lower())
     dict_words = [d["word"] for d in _dictionary]
     found = []
     for word in words:
@@ -211,7 +226,7 @@ def _dict_fallback(text, best_score, matched_english, alternatives, direction):
 
 def _dict_fallback_reverse(text, best_score, matched_lunyoro, alternatives):
     _load_retrieval()
-    words      = text.lower().split()
+    words      = re.findall(r"[a-zA-Z']+", text.lower())
     dict_words = [d["word"] for d in _dictionary]
     found = []
     for word in words:
@@ -256,7 +271,7 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
     4. Fuzzy match against dictionary, with POS-aware scoring
     """
     _load_retrieval()
-    word = word.strip()
+    word = _normalise(word.strip())
     word_lower = word.lower()
     results = []
     seen_words: set[str] = set()
@@ -503,8 +518,9 @@ _corpus_vocab: set | None = None
 
 def spellcheck(text: str) -> list:
     global _corpus_vocab
-    import re
     _load_retrieval()
+
+    text = _normalise(text)
 
     if _corpus_vocab is None:
         _corpus_vocab = _build_corpus_vocab()

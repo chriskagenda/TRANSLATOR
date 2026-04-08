@@ -141,7 +141,7 @@ async def translate_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="pypdf2 not installed")
 
     import re
-    from translate import get_index_and_model
+    from translate import get_index_and_model, _normalise
     _index, _model = get_index_and_model()
 
     contents = await file.read()
@@ -152,7 +152,7 @@ async def translate_pdf(file: UploadFile = File(...)):
     all_sentences: list[str] = []
     for page in reader.pages:
         raw = page.extract_text() or ""
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw) if len(s.strip()) >= 3]
+        sentences = [_normalise(s.strip()) for s in re.split(r"(?<=[.!?])\s+", raw) if len(s.strip()) >= 3]
         page_sentences.append(sentences)
         all_sentences.extend(sentences)
 
