@@ -132,81 +132,132 @@ def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
-@app.post("/translate-pdf")
-async def translate_pdf(file: UploadFile = File(...)):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 
-    try:
+
+def extract_text_from_file(filename: str, contents: bytes) -> str:
+    """Extract plain text from PDF, DOCX, DOC, or TXT files."""
+    import re
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext == ".pdf":
         from PyPDF2 import PdfReader
-    except ImportError:
-        raise HTTPException(status_code=500, detail="pypdf2 not installed")
+        reader = PdfReader(io.BytesIO(contents))
+        text = " ".join(page.extract_text() or "" for page in reader.pages)
+
+    elif ext in (".docx", ".doc"):
+        from docx import Document
+        doc = Document(io.BytesIO(contents))
+        text = " ".join(p.text for p in doc.paragraphs if p.text.strip())
+
+    elif ext == ".txt":
+        text = contents.decode("utf-8", errors="ignore")
+
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def validate_upload(filename: str):
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
+        )
+
+
+@app.post("/summarize-pdf")
+async def summarize_pdf(file: UploadFile = File(...)):
+    """Upload a PDF, DOCX, DOC, or TXT and get an English summary."""
+    validate_upload(file.filename)
 
     import re
-    from translate import get_index_and_model
-    _index, _model = get_index_and_model()
+    from translate import _mt_translate, _load_retrieval, _dictionary
 
     contents = await file.read()
-    reader = PdfReader(io.BytesIO(contents))
+    try:
+        full_text = extract_text_from_file(file.filename, contents)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    # extract all sentences across all pages first
-    page_sentences: list[list[str]] = []
-    all_sentences: list[str] = []
-    for page in reader.pages:
-        raw = page.extract_text() or ""
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw) if len(s.strip()) >= 3]
-        page_sentences.append(sentences)
-        all_sentences.extend(sentences)
+    if not full_text:
+        raise HTTPException(status_code=400, detail="No text found in document")
 
-    if not all_sentences:
-        raise HTTPException(status_code=400, detail="No text found in PDF")
+    # Split into sentences
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', full_text) if len(s.strip()) > 10]
+    total_sentences = len(sentences)
 
-    # batch encode all sentences in one shot — much faster than one by one
-    from sentence_transformers import util
-    import numpy as np
+    # Detect language — if majority of words match Lunyoro dictionary, translate first
+    _load_retrieval()
+    known_lunyoro = set(d["word"].lower() for d in _dictionary if d.get("word"))
+    sample_words = " ".join(sentences[:20]).lower().split()
+    lunyoro_hits = sum(1 for w in sample_words if w in known_lunyoro)
+    is_lunyoro = lunyoro_hits / max(len(sample_words), 1) > 0.1
 
-    query_embeddings = _model.encode(all_sentences, batch_size=64, show_progress_bar=False)
-    corpus_embeddings = _index["embeddings"]
-    english_sentences = _index["english_sentences"]
-    lunyoro_sentences = _index["lunyoro_sentences"]
+    # Translate Lunyoro → English if needed
+    if is_lunyoro:
+        english_sentences = []
+        for sent in sentences:
+            translated = _mt_translate(sent, "lun2en") or sent
+            english_sentences.append(translated)
+    else:
+        english_sentences = sentences
 
-    # cosine similarity for all queries at once
-    scores_matrix = util.cos_sim(query_embeddings, corpus_embeddings).numpy()
+    # Extractive summarization — score sentences by position + keyword frequency
+    from collections import Counter
+    all_words = " ".join(english_sentences).lower().split()
+    stopwords = {"the","a","an","and","or","but","in","on","at","to","for","of","with","is","was","are","were","be","been","it","this","that","as","by","from","have","has","had","not","he","she","they","we","i","you","his","her","their","its","my","our","your"}
+    word_freq = Counter(w for w in all_words if w not in stopwords and len(w) > 3)
 
-    # build results
-    flat_results: list[dict] = []
-    for i, sentence in enumerate(all_sentences):
-        scores = scores_matrix[i]
-        best_idx = int(np.argmax(scores))
-        best_score = float(scores[best_idx])
-        flat_results.append({
-            "original": sentence,
-            "translation": lunyoro_sentences[best_idx] if best_score > 0.4 else sentence,
-            "confidence": round(best_score, 3),
-            "method": "semantic_match" if best_score > 0.4 else "no_match",
-        })
+    def score_sentence(sent: str, idx: int, total: int) -> float:
+        words = sent.lower().split()
+        freq_score = sum(word_freq.get(w, 0) for w in words) / max(len(words), 1)
+        # Boost first and last sentences
+        position_score = 1.5 if idx < total * 0.15 else (1.2 if idx > total * 0.85 else 1.0)
+        return freq_score * position_score
 
-    # reassemble into pages
-    pages_translated = []
-    idx = 0
-    for page_num, sentences in enumerate(page_sentences, start=1):
-        pages_translated.append({
-            "page": page_num,
-            "sentences": flat_results[idx: idx + len(sentences)],
-        })
-        idx += len(sentences)
+    scored = [(score_sentence(s, i, len(english_sentences)), s)
+              for i, s in enumerate(english_sentences)]
+    scored.sort(key=lambda x: -x[0])
+
+    # Pick top sentences — roughly 20% of document or max 10
+    top_n = max(3, min(10, len(english_sentences) // 5))
+    top_sentences = [s for _, s in scored[:top_n]]
+
+    # Re-order by original position for coherent reading
+    order = {s: i for i, s in enumerate(english_sentences)}
+    top_sentences.sort(key=lambda s: order.get(s, 0))
+
+    summary = " ".join(top_sentences)
+
+    # Translate the English summary to Lunyoro using both models
+    from translate import _mt_translate, _nllb_translate
+    summary_lunyoro_marian = _mt_translate(summary, "en2lun") or ""
+    summary_lunyoro_nllb   = _nllb_translate(summary, "en2lun") or ""
+    # Primary = NLLB (better quality), fallback to MarianMT
+    summary_lunyoro = summary_lunyoro_nllb or summary_lunyoro_marian
 
     save_history({
-        "input": f"[PDF] {file.filename}",
+        "input": f"[DOC Summary] {file.filename}",
         "direction": "en→lun",
-        "translation": f"[{len(all_sentences)} sentences translated]",
-        "method": "pdf",
+        "translation": summary_lunyoro[:200] + "..." if len(summary_lunyoro) > 200 else summary_lunyoro,
+        "method": "extractive_summary",
         "confidence": None,
         "timestamp": datetime.utcnow().isoformat(),
     })
 
     return {
         "filename": file.filename,
-        "total_pages": len(reader.pages),
-        "pages": pages_translated,
+        "total_pages": full_text.count("\f") + 1 if file.filename.lower().endswith(".pdf") else 1,
+        "total_sentences": total_sentences,
+        "language_detected": "lunyoro" if is_lunyoro else "english",
+        "summary": summary,
+        "summary_lunyoro": summary_lunyoro,
+        "summary_lunyoro_marian": summary_lunyoro_marian,
+        "summary_lunyoro_nllb": summary_lunyoro_nllb,
+        "sentences_used": top_n,
     }
+
+
