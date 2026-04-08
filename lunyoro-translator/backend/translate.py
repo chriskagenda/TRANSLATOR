@@ -523,7 +523,9 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
     results.extend(dict_results[:5])
     results.extend(corpus_hits[:3])
 
-    return results[:8]
+    # Sort all by confidence and return only the single most confident result
+    results.sort(key=lambda x: -x.get("confidence", 0))
+    return results[:1]
 
 
 def get_index_and_model():
