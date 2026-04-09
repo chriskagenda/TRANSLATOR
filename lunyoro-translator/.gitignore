@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Model files (tracked via Git LFS or excluded)
+backend/model/chat_model/
+backend/history.json
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/.env*.local
+
+# OS
+.DS_Store
+Thumbs.db
