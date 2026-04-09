@@ -50,11 +50,11 @@ run(f"{sys.executable} -m pip install fastapi uvicorn pandas scikit-learn "
 # 2. Install correct torch build
 if detect_cuda():
     print("\n✓ NVIDIA GPU detected — installing CUDA torch (cu124)...")
-    run(f"{sys.executable} -m pip install torch torchvision torchaudio "
+    run(f"{sys.executable} -m pip install torch torchvision "
         f"--index-url https://download.pytorch.org/whl/cu124")
 else:
     print("\n  No GPU detected — installing CPU torch...")
-    run(f"{sys.executable} -m pip install torch torchvision torchaudio")
+    run(f"{sys.executable} -m pip install torch torchvision")
 
 # 3. Verify GPU is usable after install
 try:
