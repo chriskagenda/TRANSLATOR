@@ -236,8 +236,8 @@ async def summarize_pdf(file: UploadFile = File(...)):
     from translate import _mt_translate, _nllb_translate
     summary_lunyoro_marian = _mt_translate(summary, "en2lun") or ""
     summary_lunyoro_nllb   = _nllb_translate(summary, "en2lun") or ""
-    # Primary = NLLB (better quality), fallback to MarianMT
-    summary_lunyoro = summary_lunyoro_nllb or summary_lunyoro_marian
+    # Primary = MarianMT (better quality for Lunyoro), NLLB as comparison
+    summary_lunyoro = summary_lunyoro_marian or summary_lunyoro_nllb
 
     save_history({
         "input": f"[DOC Summary] {file.filename}",

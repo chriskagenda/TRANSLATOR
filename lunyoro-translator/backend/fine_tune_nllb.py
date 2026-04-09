@@ -27,9 +27,9 @@ DATA_DIR  = os.path.join(os.path.dirname(__file__), "data", "training")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
 BASE_MODEL = "facebook/nllb-200-distilled-600M"
 
-# NLLB language codes
+# NLLB language codes — run_Latn (Rundi) is closest to Lunyoro/Rutooro
 LANG_EN  = "eng_Latn"
-LANG_LUN = "lug_Latn"   # Luganda is the closest supported Bantu language to Lunyoro
+LANG_LUN = "run_Latn"
 
 # Use both GPUs via DataParallel if available, else single GPU, else CPU
 if torch.cuda.device_count() >= 2:
@@ -97,6 +97,7 @@ def train_nllb(direction: str, epochs: int = 10, batch_size: int = 16, lr: float
     print(f"Loading {BASE_MODEL}...")
     tokenizer = NllbTokenizer.from_pretrained(BASE_MODEL)
     model = AutoModelForSeq2SeqLM.from_pretrained(BASE_MODEL).to(DEVICE)
+    model.gradient_checkpointing_enable()  # saves VRAM at cost of ~20% speed
 
     if USE_MULTI_GPU:
         print(f"Wrapping with DataParallel across {torch.cuda.device_count()} GPUs")
