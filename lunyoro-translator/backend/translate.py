@@ -47,7 +47,7 @@ _nllb_models   = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, mod
 _nllb_available = {}  # {"en2lun": bool, "lun2en": bool}
 
 NLLB_LANG_EN  = "eng_Latn"
-NLLB_LANG_LUN = "lug_Latn"
+NLLB_LANG_LUN = "run_Latn"  # Rundi — closest NLLB code to Lunyoro/Rutooro
 
 
 # ── loaders ──────────────────────────────────────────────────────────────────
@@ -189,8 +189,8 @@ def translate(text: str, top_k: int = 3, context: str = "") -> dict:
 
     if marian or nllb:
         return {
-            "translation":        marian or nllb,
-            "translation_nllb":   nllb,
+            "translation":       marian or nllb,  # MarianMT is primary
+            "translation_nllb":  nllb,
             "translation_marian": marian,
             "method":             "neural_mt",
             "confidence":         1.0,
@@ -233,7 +233,7 @@ def translate_to_english(text: str, top_k: int = 3, context: str = "") -> dict:
 
     if marian or nllb:
         return {
-            "translation":        marian or nllb,
+            "translation":        marian or nllb,  # MarianMT is primary
             "translation_nllb":   nllb,
             "translation_marian": marian,
             "method":             "neural_mt",

@@ -40,10 +40,14 @@ export default function PdfTranslator() {
 
     try {
       const res = await fetch(`${API}/summarize-pdf`, { method: "POST", body: form });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.detail || "Could not process the document.");
+        return;
+      }
       setSummary(await res.json());
     } catch {
-      setError("Could not process the document. Make sure the backend is running.");
+      setError("Could not connect to the backend. Make sure it is running.");
     } finally {
       setLoading(false);
     }
@@ -101,10 +105,12 @@ export default function PdfTranslator() {
               {summary.language_detected} detected
             </span>
           </div>
-          <div className="bg-white border border-blue-200 rounded-lg p-5">
-            <p className="text-xs text-blue-600 font-medium uppercase tracking-wide mb-3">English Summary</p>
-            <p className="text-sm text-gray-800 leading-relaxed">{summary.summary}</p>
-          </div>
+          <details className="bg-white border border-blue-200 rounded-lg">
+            <summary className="px-5 py-3 text-xs text-blue-600 font-medium uppercase tracking-wide cursor-pointer select-none">
+              English Summary
+            </summary>
+            <p className="px-5 pb-4 text-sm text-gray-800 leading-relaxed">{summary.summary}</p>
+          </details>
           {summary.summary_lunyoro && (
             <div className="bg-white border border-green-200 rounded-lg p-5">
               <p className="text-xs text-green-600 font-medium uppercase tracking-wide mb-3">Lunyoro / Rutooro Summary</p>
