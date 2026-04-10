@@ -174,9 +174,7 @@ async def summarize_pdf(file: UploadFile = File(...)):
     validate_upload(file.filename)
 
     import re
-    from translate import _mt_translate, _nllb_translate, _load_retrieval, _normalise
-    _load_retrieval()
-    from translate import _dictionary
+    from translate import _mt_translate, _load_retrieval, _dictionary
 
     contents = await file.read()
     try:
@@ -187,22 +185,27 @@ async def summarize_pdf(file: UploadFile = File(...)):
     if not full_text:
         raise HTTPException(status_code=400, detail="No text found in document")
 
-    # Split into sentences with NFC normalisation
-    sentences = [_normalise(s.strip()) for s in re.split(r'(?<=[.!?])\s+', full_text) if len(s.strip()) > 10]
+    # Split into sentences
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', full_text) if len(s.strip()) > 10]
     total_sentences = len(sentences)
 
-    # Detect language
+    # Detect language — if majority of words match Lunyoro dictionary, translate first
+    _load_retrieval()
     known_lunyoro = set(d["word"].lower() for d in _dictionary if d.get("word"))
     sample_words = " ".join(sentences[:20]).lower().split()
     lunyoro_hits = sum(1 for w in sample_words if w in known_lunyoro)
     is_lunyoro = lunyoro_hits / max(len(sample_words), 1) > 0.1
 
+    # Translate Lunyoro → English if needed
     if is_lunyoro:
-        english_sentences = [_mt_translate(s, "lun2en") or s for s in sentences]
+        english_sentences = []
+        for sent in sentences:
+            translated = _mt_translate(sent, "lun2en") or sent
+            english_sentences.append(translated)
     else:
         english_sentences = sentences
 
-    # Extractive summarization
+    # Extractive summarization — score sentences by position + keyword frequency
     from collections import Counter
     all_words = " ".join(english_sentences).lower().split()
     stopwords = {"the","a","an","and","or","but","in","on","at","to","for","of","with","is","was","are","were","be","been","it","this","that","as","by","from","have","has","had","not","he","she","they","we","i","you","his","her","their","its","my","our","your"}
@@ -211,23 +214,30 @@ async def summarize_pdf(file: UploadFile = File(...)):
     def score_sentence(sent: str, idx: int, total: int) -> float:
         words = sent.lower().split()
         freq_score = sum(word_freq.get(w, 0) for w in words) / max(len(words), 1)
+        # Boost first and last sentences
         position_score = 1.5 if idx < total * 0.15 else (1.2 if idx > total * 0.85 else 1.0)
         return freq_score * position_score
 
-    scored = [(score_sentence(s, i, len(english_sentences)), s) for i, s in enumerate(english_sentences)]
+    scored = [(score_sentence(s, i, len(english_sentences)), s)
+              for i, s in enumerate(english_sentences)]
     scored.sort(key=lambda x: -x[0])
 
+    # Pick top sentences — roughly 20% of document or max 10
     top_n = max(3, min(10, len(english_sentences) // 5))
     top_sentences = [s for _, s in scored[:top_n]]
 
+    # Re-order by original position for coherent reading
     order = {s: i for i, s in enumerate(english_sentences)}
     top_sentences.sort(key=lambda s: order.get(s, 0))
 
     summary = " ".join(top_sentences)
 
+    # Translate the English summary to Lunyoro using both models
+    from translate import _mt_translate, _nllb_translate
     summary_lunyoro_marian = _mt_translate(summary, "en2lun") or ""
     summary_lunyoro_nllb   = _nllb_translate(summary, "en2lun") or ""
-    summary_lunyoro = summary_lunyoro_marian or summary_lunyoro_nllb
+    # Primary = NLLB-200, fallback to MarianMT
+    summary_lunyoro = summary_lunyoro_nllb or summary_lunyoro_marian
 
     save_history({
         "input": f"[DOC Summary] {file.filename}",
@@ -240,6 +250,7 @@ async def summarize_pdf(file: UploadFile = File(...)):
 
     return {
         "filename": file.filename,
+        "total_pages": full_text.count("\f") + 1 if file.filename.lower().endswith(".pdf") else 1,
         "total_sentences": total_sentences,
         "language_detected": "lunyoro" if is_lunyoro else "english",
         "summary": summary,
@@ -250,6 +261,7 @@ async def summarize_pdf(file: UploadFile = File(...)):
     }
 
 
+<<<<<<< HEAD
 class ChatRequest(BaseModel):
     message: str
     history: list = []
@@ -475,3 +487,5 @@ def chat(req: ChatRequest):
         )
 
     return {"reply": reply}
+=======
+>>>>>>> 0654a5b33c44490cc7445e6c25d47ee0b297c154
