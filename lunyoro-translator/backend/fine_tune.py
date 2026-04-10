@@ -19,7 +19,7 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import (
     MarianMTModel,
     MarianTokenizer,
-    get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,
 )
 from torch.optim import AdamW
 
@@ -107,7 +107,7 @@ def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: 
     raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
     optimizer = AdamW(raw_model.parameters(), lr=lr, weight_decay=0.01)
     total_steps = len(train_loader) * epochs
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
         optimizer, num_warmup_steps=total_steps // 10, num_training_steps=total_steps
     )
 
