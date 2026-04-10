@@ -4,5 +4,9 @@ lunyoro-translator/backend/model/**/*.pkl filter=lfs diff=lfs merge=lfs -text
 *.safetensors filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
 *.pkl filter=lfs diff=lfs merge=lfs -text
+<<<<<<< HEAD
 *.xlsx filter=lfs diff=lfs merge=lfs -text
 *.xls filter=lfs diff=lfs merge=lfs -text
+=======
+*.gguf filter=lfs diff=lfs merge=lfs -text
+>>>>>>> e6cde0b9930a9270416ef11139905666682a47d1

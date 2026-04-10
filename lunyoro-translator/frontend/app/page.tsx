@@ -5,7 +5,9 @@ import Dictionary from "@/components/Dictionary";
 import History from "@/components/History";
 import PdfTranslator from "@/components/PdfTranslator";
 import VoiceTranslator from "@/components/VoiceTranslator";
-type Tab = "translate" | "voice" | "pdf" | "dictionary" | "history";
+import ChatPage from "@/components/ChatPage"; // Import your chat component
+
+type Tab = "translate" | "voice" | "pdf" | "dictionary" | "history" | "chat";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("translate");
@@ -18,18 +20,18 @@ export default function Home() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6 border-b border-gray-200">
-        {(["translate", "voice", "pdf", "dictionary", "history"] as Tab[]).map((t) => (
+      <div className="flex gap-2 mb-6 border-b border-gray-200 overflow-x-auto">
+        {(["translate", "voice", "pdf", "dictionary", "history", "chat"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
+            className={`px-4 py-2 text-sm font-medium capitalize transition-colors whitespace-nowrap ${
               tab === t
                 ? "border-b-2 border-blue-600 text-blue-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "pdf" ? "PDF" : t === "voice" ? "🎙 Voice" : t}
+            {t === "pdf" ? "PDF" : t === "voice" ? "🎙 Voice" : t === "chat" ? "💬 Chat" : t}
           </button>
         ))}
       </div>
@@ -39,6 +41,7 @@ export default function Home() {
       {tab === "pdf" && <PdfTranslator />}
       {tab === "dictionary" && <Dictionary />}
       {tab === "history" && <History />}
+      {tab === "chat" && <ChatPage />}
     </main>
   );
 }
