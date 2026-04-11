@@ -261,7 +261,6 @@ async def summarize_pdf(file: UploadFile = File(...)):
     }
 
 
-<<<<<<< HEAD
 class ChatRequest(BaseModel):
     message: str
     history: list = []
@@ -329,51 +328,90 @@ def chat(req: ChatRequest):
             reply += f"**{marian or nllb or 'No translation available'}**"
             return {"reply": reply}
 
-    # ── Conversation mode — user types in Lunyoro, model replies in Lunyoro ─
+    # ── Conversation mode — generative replies in Runyoro/Rutooro ────────────
     if req.conversation_mode:
-        # Translate user's Lunyoro input to English to understand intent
-        msg_en = _mt_translate(msg, "lun2en") or _nllb_translate(msg, "lun2en") or ""
+        import random
+
+        # Use NLLB first for lun→en — it's more accurate than MarianMT for Lunyoro
+        msg_en = _nllb_translate(msg, "lun2en") or _mt_translate(msg, "lun2en") or msg
         msg_en_lower = msg_en.lower()
 
-        # Native Lunyoro reply pools — no translation involved
-        greetings_lun = [
-            "Ndi kurungi, wowe oraire otya?",
-            "Mirembe, nkusemererwa kukugamba.",
-            "Oraire kurungi! Nkuyamba ota?",
-        ]
-        thanks_lun = [
-            "Webare muno!",
-            "Tindukwetaga kusima, niyo omulimo gwange.",
-            "Nsemererwa kukuyamba.",
-        ]
-        farewell_lun = [
-            "Genda kurungi, tugaruke!",
-            "Mirembe omu rugendo rwawe.",
-            "Tuzongera okugambana.",
-        ]
-        agree_lun = [
-            "Ego, nkuikiriza.",
-            "Kyo kituufu.",
-            "Nkutekereza nkokugamba.",
-        ]
-        default_lun = [
-            "Nkutekereza. Ngamba okwongerera.",
-            "Kyo kirungi. Nkuhurira.",
-            "Ego, nkuikiriza. Ngamba okwongerera.",
-            "Nkumanya. Tukwatane omu kigambo kino.",
-        ]
+        # Step 2: Generate a thoughtful English response based on the question
+        # Build context from conversation history
+        history_context = ""
+        if req.history:
+            recent = req.history[-4:]  # last 4 turns
+            for turn in recent:
+                role = turn.get("role", "")
+                content = turn.get("content", "")
+                if role == "user":
+                    en = _mt_translate(content, "lun2en") or content
+                    history_context += f"User: {en}\n"
+                else:
+                    history_context += f"Assistant: {content}\n"
 
-        import random
-        if any(w in msg_en_lower for w in ["hello", "hi", "good morning", "good evening", "how are you", "greet"]):
-            reply_lun = random.choice(greetings_lun)
-        elif any(w in msg_en_lower for w in ["thank", "grateful"]):
-            reply_lun = random.choice(thanks_lun)
-        elif any(w in msg_en_lower for w in ["bye", "goodbye", "see you", "farewell"]):
-            reply_lun = random.choice(farewell_lun)
-        elif any(w in msg_en_lower for w in ["yes", "agree", "correct", "right", "true"]):
-            reply_lun = random.choice(agree_lun)
+        # Generate a contextual English reply
+        if any(w in msg_en_lower for w in ["who are you", "what are you", "your name"]):
+            reply_en = "I am an AI language assistant for Runyoro-Rutooro. I can help you learn the language, answer questions, and have conversations."
+
+        elif any(w in msg_en_lower for w in ["hello", "hi", "good morning", "good afternoon", "good evening", "how are you", "greetings", "how do you do", "how are things", "how is it", "how is life", "fine", "well", "doing"]):
+            replies = [
+                "I am fine, thank you for asking! How are you doing today?",
+                "I am doing very well! It is great to hear from you. How can I help?",
+                "I am well, thank you! I am happy to speak with you today.",
+            ]
+            reply_en = random.choice(replies)
+
+        elif any(w in msg_en_lower for w in ["thank", "grateful", "appreciate"]):
+            replies = [
+                "You are very welcome! It is my pleasure to help you.",
+                "I am glad I could be of help. Feel free to ask anything else.",
+                "Thank you for the kind words! I am always here for you.",
+            ]
+            reply_en = random.choice(replies)
+
+        elif any(w in msg_en_lower for w in ["bye", "goodbye", "see you", "farewell", "leaving"]):
+            replies = [
+                "Goodbye! It was wonderful speaking with you. Come back anytime.",
+                "Safe travels! I will be here whenever you need me.",
+                "Until next time! Take care of yourself.",
+            ]
+            reply_en = random.choice(replies)
+
+        elif any(w in msg_en_lower for w in ["what", "how", "why", "when", "where", "who", "which", "explain", "tell me"]):
+            # Question — generate a relevant answer using corpus knowledge
+            from sentence_transformers import util as st_util
+            import numpy as np
+            q_emb = _sem_model.encode(msg_en, convert_to_numpy=True)
+            scores = st_util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
+            top_idx = np.argsort(scores)[::-1][:3]
+            top_en = [_index["english_sentences"][i] for i in top_idx if float(scores[i]) > 0.3]
+            if top_en:
+                reply_en = f"That is a great question. {top_en[0]} I hope that helps answer what you were asking."
+            else:
+                reply_en = f"That is an interesting question about '{msg_en}'. In Runyoro-Rutooro culture and language, this is an important topic worth exploring further."
+
+        elif any(w in msg_en_lower for w in ["yes", "no", "agree", "disagree", "correct", "wrong", "true", "false"]):
+            replies = [
+                "I understand your point. Could you tell me more about what you think?",
+                "That is a valid perspective. I would love to hear more of your thoughts.",
+                "Interesting! Let us explore this topic further together.",
+            ]
+            reply_en = random.choice(replies)
+
         else:
-            reply_lun = random.choice(default_lun)
+            # General conversational reply
+            replies = [
+                f"I understand you are talking about '{msg_en}'. That is a fascinating topic. Tell me more about what you mean.",
+                f"Thank you for sharing that. Regarding '{msg_en}', I think this is something worth discussing in depth.",
+                f"I hear you. '{msg_en}' is indeed an important subject. What specifically would you like to know?",
+                "That is very interesting! Please continue, I am listening carefully.",
+                "I appreciate you sharing that with me. Could you elaborate a little more?",
+            ]
+            reply_en = random.choice(replies)
+
+        # Step 3: Translate to Lunyoro — MarianMT primary (authentic Lunyoro), NLLB fallback
+        reply_lun = _mt_translate(reply_en, "en2lun") or _nllb_translate(reply_en, "en2lun") or reply_en
 
         return {"reply": reply_lun}
 
@@ -487,5 +525,3 @@ def chat(req: ChatRequest):
         )
 
     return {"reply": reply}
-=======
->>>>>>> 0654a5b33c44490cc7445e6c25d47ee0b297c154

@@ -189,8 +189,8 @@ def translate(text: str, top_k: int = 3, context: str = "") -> dict:
 
     if marian or nllb:
         return {
-            "translation":       marian or nllb,  # MarianMT is primary
-            "translation_nllb":  nllb,
+            "translation":        marian or nllb,  # MarianMT is primary
+            "translation_nllb":   nllb,
             "translation_marian": marian,
             "method":             "neural_mt",
             "confidence":         1.0,

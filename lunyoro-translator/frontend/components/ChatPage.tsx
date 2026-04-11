@@ -138,8 +138,6 @@ export default function ChatPage() {
                   onClick={() => {
                     if (s.prompt === "CONVERSATION_MODE") {
                       setConversationMode(true);
-                      const greeting: ChatItem = { role: "assistant", content: "Oraire otya? Nkugarukamu omu Runyoro-Rutooro. Ngamba!" };
-                      setHistory([greeting]);
                     } else {
                       sendMessage(s.prompt);
                     }
