@@ -103,9 +103,7 @@ def _load_mt(direction: str):
 
 
 def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
-    """Run inference with a fine-tuned MarianMT model.
-    Optionally prepend a context sentence separated by ' ||| '.
-    """
+    """Run inference with a fine-tuned MarianMT model."""
     if not _load_mt(direction):
         return None
     import torch
@@ -119,7 +117,12 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
             max_length=512,
             early_stopping=True,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    # Apply R/L rule to Lunyoro output
+    if direction == "en2lun" and result:
+        from language_rules import apply_rl_rule_to_text
+        result = apply_rl_rule_to_text(result)
+    return result
 
 
 def _load_nllb(direction: str) -> bool:
@@ -175,7 +178,12 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
             max_length=512,
             early_stopping=True,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    nllb_result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    # Apply R/L rule to Lunyoro output
+    if direction == "en2lun" and nllb_result:
+        from language_rules import apply_rl_rule_to_text
+        nllb_result = apply_rl_rule_to_text(nllb_result)
+    return nllb_result
 
 
 # ── public API ───────────────────────────────────────────────────────────────
@@ -278,12 +286,27 @@ def _dict_fallback(text, best_score, matched_english, alternatives, direction):
     dict_words = [d["word"] for d in _dictionary]
     found = []
     for word in words:
+        # Check static web entries first
+        from web_fallback import lookup_static
+        static = lookup_static(word, "en→lun")
+        if static:
+            found.append({"english_word": word, "lunyoro_word": static, "definition": ""})
+            continue
         match = process.extractOne(word, dict_words, scorer=fuzz.ratio, score_cutoff=80)
         if match:
             entry = next((d for d in _dictionary if d["word"] == match[0]), None)
             if entry:
                 found.append({"english_word": word, "lunyoro_word": entry["word"],
                                "definition": entry.get("definitionNative", "")})
+
+    # If still nothing found, try web fallback for the full phrase
+    if not found:
+        from web_fallback import web_search_fallback
+        web_result = web_search_fallback(text, "en→lun")
+        if web_result:
+            return {"translation": web_result, "method": "web_fallback",
+                    "confidence": 0.4, "alternatives": alternatives}
+
     return {"translation": None, "method": "dictionary_fallback",
             "confidence": round(best_score, 3), "matched_english": matched_english,
             "alternatives": alternatives, "dictionary_matches": found,
@@ -337,6 +360,18 @@ def lookup_word(word: str, direction: str = "en→lun") -> list:
 
     mt_direction = "en2lun" if direction == "en→lun" else "lun2en"
     mt_translation = _mt_translate(word, mt_direction)
+
+    # Check static web entries for common words not in training data
+    from web_fallback import lookup_static
+    static_result = lookup_static(word_lower, direction)
+    if static_result and not mt_translation:
+        results.append({
+            "word": static_result if direction == "en→lun" else word,
+            "definitionEnglish": word if direction == "en→lun" else static_result,
+            "definitionNative": "", "exampleSentence1": "", "exampleSentence1English": "",
+            "dialect": "", "pos": "", "source": "web_reference", "confidence": 0.9,
+            "pos_matched": False,
+        })
 
     lunyoro_side = mt_translation if direction == "en→lun" else word
     inferred_pos = _infer_pos(lunyoro_side) if lunyoro_side else None
@@ -551,6 +586,16 @@ def spellcheck(text: str) -> list:
 
     if _corpus_vocab is None:
         _corpus_vocab = _build_corpus_vocab()
+        # Add interjections as known valid words
+        from language_rules import INTERJECTIONS, IDIOMS
+        for word in INTERJECTIONS:
+            for w in word.split():
+                if len(w) >= 2:
+                    _corpus_vocab.add(w.lower())
+        for phrase in IDIOMS:
+            for w in phrase.split():
+                if len(w) >= 2:
+                    _corpus_vocab.add(w.lower())
 
     vocab_list = list(_corpus_vocab)
     tokens = re.findall(r"[a-zA-Z']+", text)
@@ -558,6 +603,14 @@ def spellcheck(text: str) -> list:
 
     for token in tokens:
         lower = token.lower()
+        # Apply R/L rule to the input token before checking
+        from language_rules import apply_rl_rule
+        corrected_token = apply_rl_rule(lower)
+        if corrected_token != lower:
+            # The token violates R/L rule — suggest the corrected form
+            misspelled.append({"word": token, "suggestions": [corrected_token]})
+            continue
+
         if len(lower) < 3 or lower in _corpus_vocab:
             continue
 

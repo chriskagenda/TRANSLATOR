@@ -272,6 +272,7 @@ class ChatRequest(BaseModel):
 def chat(req: ChatRequest):
     """AI Language Assistant — answers questions about Runyoro-Rutooro using the translation models."""
     from translate import _mt_translate, _nllb_translate, _load_retrieval, _normalise
+    from language_rules import get_grammar_context, lookup_interjection, lookup_idiom, EMPAAKO, PROVERBS, NUMBERS
     _load_retrieval()
     from translate import _dictionary, _index
 
@@ -332,88 +333,180 @@ def chat(req: ChatRequest):
     if req.conversation_mode:
         import random
 
-        # Use NLLB first for lun→en — it's more accurate than MarianMT for Lunyoro
-        msg_en = _nllb_translate(msg, "lun2en") or _mt_translate(msg, "lun2en") or msg
-        msg_en_lower = msg_en.lower()
+        msg_lower_orig = msg.lower().strip()
 
-        # Step 2: Generate a thoughtful English response based on the question
-        # Build context from conversation history
-        history_context = ""
+        # ── Step 1: Intent detection ─────────────────────────────────────────
+        GREETINGS = {
+            "oraire otya", "iwe oli ota", "oli ota", "oraire", "osiibire otya",
+            "osiibire", "waliire otya", "waliire", "muramutse", "muraho",
+            "mirembe", "agandi", "oraire kurungi", "osiibire kurungi",
+            "hello", "hi", "good morning", "good afternoon", "good evening",
+        }
+        THANKS = {"webare", "webare muno", "murakoze", "nsima", "asante", "thank", "thanks", "thank you"}
+        FAREWELL = {"genda kurungi", "tugaruke", "urabeho", "murabeho", "bye", "goodbye", "see you", "farewell"}
+        IDENTITY = {"iwe oli ani", "oli ani", "who are you", "what are you", "your name"}
+        AGREEMENT = {"ego", "kandi", "nkuikiriza", "yes", "correct", "true", "agree"}
+
+        def matches(pool):
+            return any(msg_lower_orig.startswith(p) or p in msg_lower_orig for p in pool)
+
+        # ── Step 2: Build conversation context from history ──────────────────
+        # Translate recent user turns to English for context
+        context_summary = ""
         if req.history:
-            recent = req.history[-4:]  # last 4 turns
+            recent = req.history[-6:]  # last 3 exchanges
             for turn in recent:
                 role = turn.get("role", "")
                 content = turn.get("content", "")
-                if role == "user":
-                    en = _mt_translate(content, "lun2en") or content
-                    history_context += f"User: {en}\n"
-                else:
-                    history_context += f"Assistant: {content}\n"
+                if role == "user" and content:
+                    en = _nllb_translate(content, "lun2en") or content
+                    context_summary += f"User said: {en}. "
+                elif role == "assistant" and content:
+                    # translate assistant's Lunyoro reply back to English for context
+                    en = _nllb_translate(content, "lun2en") or content
+                    context_summary += f"Assistant replied: {en}. "
 
-        # Generate a contextual English reply
-        if any(w in msg_en_lower for w in ["who are you", "what are you", "your name"]):
+        # ── Step 3: Detect intent ────────────────────────────────────────────
+        if matches(IDENTITY):
+            intent = "identity"
+        elif matches(GREETINGS):
+            intent = "greeting"
+        elif matches(THANKS):
+            intent = "thanks"
+        elif matches(FAREWELL):
+            intent = "farewell"
+        elif matches(AGREEMENT):
+            intent = "agree"
+        else:
+            # Use NLLB to understand the message
+            msg_en = _nllb_translate(msg, "lun2en") or msg
+            msg_en_lower = msg_en.lower()
+            if any(w in msg_en_lower for w in ["how are you", "how is", "greet", "hello", "hi"]):
+                intent = "greeting"
+            elif any(w in msg_en_lower for w in ["thank", "grateful"]):
+                intent = "thanks"
+            elif any(w in msg_en_lower for w in ["bye", "goodbye", "farewell"]):
+                intent = "farewell"
+            elif any(w in msg_en_lower for w in ["what", "how", "why", "when", "where", "who", "which", "explain"]):
+                intent = "question"
+                msg_en_for_reply = msg_en
+            else:
+                intent = "general"
+                msg_en_for_reply = msg_en
+
+        # ── Step 4: Generate English reply using intent + context ────────────
+        if intent == "identity":
             reply_en = "I am an AI language assistant for Runyoro-Rutooro. I can help you learn the language, answer questions, and have conversations."
 
-        elif any(w in msg_en_lower for w in ["hello", "hi", "good morning", "good afternoon", "good evening", "how are you", "greetings", "how do you do", "how are things", "how is it", "how is life", "fine", "well", "doing"]):
-            replies = [
-                "I am fine, thank you for asking! How are you doing today?",
-                "I am doing very well! It is great to hear from you. How can I help?",
-                "I am well, thank you! I am happy to speak with you today.",
-            ]
-            reply_en = random.choice(replies)
+        elif intent == "greeting":
+            # If we already greeted, vary the response using context
+            if "greeted" in context_summary.lower() or "how are you" in context_summary.lower():
+                reply_en = random.choice([
+                    "I am still doing well, thank you! What would you like to talk about?",
+                    "Still great! Is there something specific you would like to discuss?",
+                ])
+            else:
+                reply_en = random.choice([
+                    "I am fine, thank you for asking! How are you doing today?",
+                    "I am doing very well! It is great to hear from you.",
+                    "I am well, thank you! I am happy to speak with you.",
+                ])
 
-        elif any(w in msg_en_lower for w in ["thank", "grateful", "appreciate"]):
-            replies = [
-                "You are very welcome! It is my pleasure to help you.",
-                "I am glad I could be of help. Feel free to ask anything else.",
+        elif intent == "thanks":
+            reply_en = random.choice([
+                "You are very welcome! It is my pleasure.",
+                "I am glad I could help. Feel free to ask anything else.",
                 "Thank you for the kind words! I am always here for you.",
-            ]
-            reply_en = random.choice(replies)
+            ])
 
-        elif any(w in msg_en_lower for w in ["bye", "goodbye", "see you", "farewell", "leaving"]):
-            replies = [
+        elif intent == "farewell":
+            reply_en = random.choice([
                 "Goodbye! It was wonderful speaking with you. Come back anytime.",
                 "Safe travels! I will be here whenever you need me.",
                 "Until next time! Take care of yourself.",
-            ]
-            reply_en = random.choice(replies)
+            ])
 
-        elif any(w in msg_en_lower for w in ["what", "how", "why", "when", "where", "who", "which", "explain", "tell me"]):
-            # Question — generate a relevant answer using corpus knowledge
+        elif intent == "agree":
+            reply_en = random.choice([
+                "I am glad we agree! What else would you like to talk about?",
+                "Great! Let us continue our conversation.",
+                "Wonderful! Tell me more.",
+            ])
+
+        elif intent == "question":
+            # Use corpus + context to answer
             from sentence_transformers import util as st_util
             import numpy as np
-            q_emb = _sem_model.encode(msg_en, convert_to_numpy=True)
+            # Combine current question with context for better semantic search
+            search_query = (context_summary + " " + msg_en_for_reply).strip()
+            q_emb = _sem_model.encode(search_query, convert_to_numpy=True)
             scores = st_util.cos_sim(q_emb, _index["embeddings"])[0].numpy()
             top_idx = np.argsort(scores)[::-1][:3]
             top_en = [_index["english_sentences"][i] for i in top_idx if float(scores[i]) > 0.3]
             if top_en:
-                reply_en = f"That is a great question. {top_en[0]} I hope that helps answer what you were asking."
+                reply_en = f"That is a great question. {top_en[0]}"
             else:
-                reply_en = f"That is an interesting question about '{msg_en}'. In Runyoro-Rutooro culture and language, this is an important topic worth exploring further."
+                reply_en = "That is an interesting question. I would love to explore that topic with you further."
 
-        elif any(w in msg_en_lower for w in ["yes", "no", "agree", "disagree", "correct", "wrong", "true", "false"]):
-            replies = [
-                "I understand your point. Could you tell me more about what you think?",
-                "That is a valid perspective. I would love to hear more of your thoughts.",
-                "Interesting! Let us explore this topic further together.",
-            ]
-            reply_en = random.choice(replies)
+        else:  # general
+            # Use context to make reply feel connected to the conversation
+            if context_summary:
+                reply_en = random.choice([
+                    "Following our conversation, I find that very interesting. Please tell me more.",
+                    "Building on what we discussed, could you elaborate on that?",
+                    "That connects well to what we were talking about. I am listening.",
+                ])
+            else:
+                reply_en = random.choice([
+                    "That is very interesting! Please continue, I am listening.",
+                    "I appreciate you sharing that. Could you tell me more?",
+                    "I understand. What else would you like to discuss?",
+                ])
 
-        else:
-            # General conversational reply
-            replies = [
-                f"I understand you are talking about '{msg_en}'. That is a fascinating topic. Tell me more about what you mean.",
-                f"Thank you for sharing that. Regarding '{msg_en}', I think this is something worth discussing in depth.",
-                f"I hear you. '{msg_en}' is indeed an important subject. What specifically would you like to know?",
-                "That is very interesting! Please continue, I am listening carefully.",
-                "I appreciate you sharing that with me. Could you elaborate a little more?",
-            ]
-            reply_en = random.choice(replies)
-
-        # Step 3: Translate to Lunyoro — MarianMT primary (authentic Lunyoro), NLLB fallback
-        reply_lun = _mt_translate(reply_en, "en2lun") or _nllb_translate(reply_en, "en2lun") or reply_en
+        # ── Step 5: Translate reply to Lunyoro using MarianMT only ───────────
+        reply_lun = _mt_translate(reply_en, "en2lun") or reply_en
 
         return {"reply": reply_lun}
+
+    # ── Grammar / R-L rule ───────────────────────────────────────────────────
+    if any(w in msg_lower for w in ["grammar", "r or l", "r and l", "when to use l", "when to use r", "r/l", "spelling rule"]):
+        return {"reply": get_grammar_context()}
+
+    # ── Interjection lookup ──────────────────────────────────────────────────
+    interjection_meaning = lookup_interjection(msg_lower.strip("!?."))
+    if interjection_meaning:
+        return {"reply": f"**{msg.strip()}** — {interjection_meaning}"}
+
+    # ── Idiom lookup ─────────────────────────────────────────────────────────
+    idiom_meaning = lookup_idiom(msg_lower)
+    if idiom_meaning:
+        return {"reply": f"**{msg}** — {idiom_meaning}"}
+
+    # ── Empaako lookup ───────────────────────────────────────────────────────
+    if any(w in msg_lower for w in ["empaako", "honorific", "praise name"]):
+        reply = "**Empaako** are honorific praise names in Runyoro-Rutooro culture:\n\n"
+        for name, meaning in EMPAAKO.items():
+            reply += f"• **{name}** — {meaning}\n"
+        return {"reply": reply}
+
+    # ── Proverb request ──────────────────────────────────────────────────────
+    if any(w in msg_lower for w in ["proverb", "enfumo", "saying", "wise saying"]):
+        import random
+        proverb = random.choice(PROVERBS)
+        translation = _mt_translate(proverb, "lun2en") or ""
+        reply = f"**Enfumo (Proverb):**\n\n*{proverb}*"
+        if translation:
+            reply += f"\n\n_{translation}_"
+        return {"reply": reply}
+
+    # ── Number lookup ────────────────────────────────────────────────────────
+    if any(w in msg_lower for w in ["number", "count", "okubara", "how do you say"]):
+        import re as _re
+        nums = _re.findall(r'\d+', msg)
+        if nums:
+            n = int(nums[0])
+            if n in NUMBERS:
+                return {"reply": f"**{n}** in Runyoro-Rutooro is: **{NUMBERS[n]}**"}
 
     # ── Detect intent ────────────────────────────────────────────────────────
 
@@ -525,3 +618,39 @@ def chat(req: ChatRequest):
         )
 
     return {"reply": reply}
+
+
+@app.get("/language-rules")
+def get_language_rules():
+    """Return language rules, interjections, idioms, numbers and proverbs."""
+    from language_rules import (
+        RL_RULE, EMPAAKO, INTERJECTIONS, IDIOMS, NUMBERS, PROVERBS, get_grammar_context
+    )
+    return {
+        "rl_rule": RL_RULE.strip(),
+        "grammar_summary": get_grammar_context().strip(),
+        "empaako": EMPAAKO,
+        "interjections": INTERJECTIONS,
+        "idioms": IDIOMS,
+        "numbers": {str(k): v for k, v in NUMBERS.items()},
+        "proverbs": PROVERBS,
+    }
+
+
+@app.get("/language-rules/interjections")
+def get_interjections():
+    from language_rules import INTERJECTIONS
+    return {"interjections": INTERJECTIONS}
+
+
+@app.get("/language-rules/idioms")
+def get_idioms():
+    from language_rules import IDIOMS
+    return {"idioms": IDIOMS}
+
+
+@app.get("/language-rules/proverbs")
+def get_proverbs():
+    from language_rules import PROVERBS
+    import random
+    return {"proverbs": PROVERBS, "random": random.choice(PROVERBS)}

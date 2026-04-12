@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -34,6 +34,17 @@ export default function Dictionary() {
   const [searched, setSearched] = useState(false);
   const [direction, setDirection] = useState<DictDirection>("en→lun");
   const [posFilter, setPosFilter] = useState<PosFilter>("ALL");
+  const [interjections, setInterjections] = useState<Record<string, string>>({});
+  const [idioms, setIdioms] = useState<Record<string, string>>({});
+  const [ruleHint, setRuleHint] = useState<string | null>(null);
+
+  // Load interjections and idioms once
+  useEffect(() => {
+    fetch(`${API}/language-rules/interjections`)
+      .then(r => r.json()).then(d => setInterjections(d.interjections || {})).catch(() => {});
+    fetch(`${API}/language-rules/idioms`)
+      .then(r => r.json()).then(d => setIdioms(d.idioms || {})).catch(() => {});
+  }, []);
 
   const placeholder = direction === "en→lun"
     ? "Search an English word..."
@@ -44,6 +55,22 @@ export default function Dictionary() {
     setLoading(true);
     setSearched(true);
     setPosFilter("ALL");
+    setRuleHint(null);
+
+    // Check interjections and idioms first
+    const q = query.toLowerCase().trim();
+    if (interjections[q]) {
+      setRuleHint(`Interjection: "${query}" — ${interjections[q]}`);
+    } else if (idioms[q]) {
+      setRuleHint(`Idiom: "${query}" — ${idioms[q]}`);
+    }
+
+    // R/L rule hint for lun→en searches
+    if (direction === "lun→en" && /[lL]/.test(query)) {
+      setRuleHint(prev => (prev ? prev + "\n" : "") +
+        "R/L Rule: L is only used before/after 'e' or 'i' vowels. All other positions use R.");
+    }
+
     try {
       const res = await fetch(`${API}/lookup`, {
         method: "POST",
@@ -65,14 +92,8 @@ export default function Dictionary() {
     setResults([]);
     setSearched(false);
     setPosFilter("ALL");
+    setRuleHint(null);
   }
-
-  // Derive which POS tabs have results
-  const availablePos = useMemo(() => {
-    const set = new Set<string>();
-    results.forEach(r => { if (r.pos) set.add(r.pos.toUpperCase()); });
-    return set;
-  }, [results]);
 
   const filtered = useMemo(() => {
     if (posFilter === "ALL") return results;
@@ -117,9 +138,15 @@ export default function Dictionary() {
         </button>
       </div>
 
+      {/* Language rule hint */}
+      {ruleHint && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 whitespace-pre-line">
+          📖 {ruleHint}
+        </div>
+      )}
+
       {/* POS filter tabs — only shown when results exist */}
-      {results.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap">
+      {results.length > 0 && (        <div className="flex gap-1.5 flex-wrap">
           {(["ALL", "N", "V", "ADJ"] as PosFilter[]).map((p) => {
             const info = p === "ALL" ? null : POS_LABELS[p];
             const count = p === "ALL"

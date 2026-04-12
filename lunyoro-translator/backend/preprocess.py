@@ -32,6 +32,15 @@ def clean_text(text) -> str:
     return text
 
 
+def clean_lunyoro(text) -> str:
+    """Clean Lunyoro text and apply R/L orthography rule."""
+    cleaned = clean_text(text)
+    if not cleaned:
+        return cleaned
+    from language_rules import apply_rl_rule_to_text
+    return apply_rl_rule_to_text(cleaned)
+
+
 def _correct_pos(row) -> str:
     """
     Auto-correct POS tags that are clearly wrong based on Bantu prefix rules.
@@ -67,7 +76,7 @@ def load_sentence_pairs() -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
     df = df.rename(columns={"English": "english", "Nyoro": "lunyoro"})
     df["english"] = df["english"].apply(clean_text)
-    df["lunyoro"] = df["lunyoro"].apply(clean_text)
+    df["lunyoro"] = df["lunyoro"].apply(clean_lunyoro)
     df = df[(df["english"].str.len() > 3) & (df["lunyoro"].str.len() > 3)]
     df = df.drop_duplicates(subset=["english"])
     df = df.reset_index(drop=True)
@@ -97,8 +106,12 @@ def load_dictionary() -> pd.DataFrame:
     ]
     df = df[keep_cols].copy()
 
+    lunyoro_cols = ["word", "definitionNative", "exampleSentence1", "exampleSentence2"]
     for col in keep_cols:
-        df[col] = df[col].apply(clean_text)
+        if col in lunyoro_cols:
+            df[col] = df[col].apply(clean_lunyoro)
+        else:
+            df[col] = df[col].apply(clean_text)
 
     df = df[df["word"].str.len() > 0]
 

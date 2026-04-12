@@ -274,6 +274,11 @@ export default function Translator() {
           />
         )}
         <p className="text-xs text-gray-400 mt-1">Ctrl+Enter to translate</p>
+        {direction === "lun→en" && input && /[lL]/.test(input) && (
+          <p className="text-xs text-amber-600 mt-1">
+            📖 R/L Rule: L is only used before/after &apos;e&apos; or &apos;i&apos; vowels (e.g. leero, aliire). All other positions use R.
+          </p>
+        )}
       </div>
 
       {/* Hover tooltip for misspelled words */}
