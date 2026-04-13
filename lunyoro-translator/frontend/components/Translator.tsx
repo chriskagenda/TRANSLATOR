@@ -36,6 +36,7 @@ export default function Translator() {
   const [direction, setDirection] = useState<Direction>("en→lun");
   const [misspelled, setMisspelled] = useState<Misspelled[]>([]);
   const [tooltip, setTooltip] = useState<{ word: string; suggestions: string[]; x: number; y: number } | null>(null);
+  const [showComparison, setShowComparison] = useState(false);
   const [ignored, setIgnored] = useState<Set<string>>(new Set());
 
   const spellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -54,6 +55,7 @@ export default function Translator() {
     setError("");
     setMisspelled([]);
     setTooltip(null);
+    setShowComparison(false);
     setIgnored(new Set());
   }
 
@@ -345,12 +347,22 @@ export default function Translator() {
             {matchedValue && result.method !== "exact_match" && (
               <p className="text-xs text-gray-400 mt-2">{matchedLabel}: &quot;{matchedValue}&quot;</p>
             )}
-            {/* Show both model outputs if available */}
+            {/* NLLB comparison — hidden behind toggle */}
             {result.translation_marian && result.translation_nllb && (
-              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
-                <p className="text-xs text-gray-400 font-medium">Model comparison:</p>
-                <p className="text-xs text-gray-600"><span className="font-medium">MarianMT:</span> {result.translation_marian}</p>
-                <p className="text-xs text-gray-600"><span className="font-medium">NLLB-200:</span> {result.translation_nllb}</p>
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowComparison(v => !v)}
+                  className="text-xs text-gray-400 hover:text-gray-600 underline"
+                >
+                  {showComparison ? "Hide model comparison" : "Show model comparison"}
+                </button>
+                {showComparison && (
+                  <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                    <p className="text-xs text-gray-400 font-medium">Model comparison (experimental):</p>
+                    <p className="text-xs text-gray-600"><span className="font-medium">MarianMT:</span> {result.translation_marian}</p>
+                    <p className="text-xs text-gray-600"><span className="font-medium">NLLB-200:</span> {result.translation_nllb}</p>
+                  </div>
+                )}
               </div>
             )}
           </div>

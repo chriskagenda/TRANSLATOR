@@ -158,7 +158,7 @@ def _load_nllb(direction: str) -> bool:
 
 
 def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
-    """Run inference with a fine-tuned NLLB model."""
+    """Run inference with a fine-tuned NLLB model with Lunyoro vocab constraint."""
     if not _load_nllb(direction):
         return None
     import torch
@@ -169,14 +169,28 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
     input_text = f"{context} ||| {text}" if context else text
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
     forced_bos = tokenizer.convert_tokens_to_ids(tgt_lang)
+
+    # Load Lunyoro token whitelist for constrained decoding (en→lun only)
+    generate_kwargs = dict(
+        forced_bos_token_id=forced_bos,
+        num_beams=4,
+        max_length=512,
+        early_stopping=True,
+    )
+    if direction == "en2lun":
+        whitelist_path = os.path.join(MODEL_DIR, "lunyoro_token_whitelist.json")
+        if os.path.exists(whitelist_path):
+            if not hasattr(_nllb_translate, "_whitelist"):
+                import json
+                with open(whitelist_path) as f:
+                    _nllb_translate._whitelist = f.read()
+                _nllb_translate._whitelist_ids = json.loads(_nllb_translate._whitelist)
+            # Use prefix_allowed_tokens_fn to restrict output vocabulary
+            allowed = set(_nllb_translate._whitelist_ids)
+            generate_kwargs["prefix_allowed_tokens_fn"] = lambda batch_id, prefix: list(allowed)
+
     with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            forced_bos_token_id=forced_bos,
-            num_beams=4,
-            max_length=512,
-            early_stopping=True,
-        )
+        output_ids = model.generate(**inputs, **generate_kwargs)
     result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     return correct_rl(result) if direction == "en2lun" else result
 
@@ -192,7 +206,7 @@ def translate(text: str, top_k: int = 3, context: str = "") -> dict:
 
     if marian or nllb:
         return {
-            "translation":        marian or nllb,  # MarianMT is primary
+            "translation":        marian or nllb,
             "translation_nllb":   nllb,
             "translation_marian": marian,
             "method":             "neural_mt",
@@ -228,20 +242,17 @@ def translate(text: str, top_k: int = 3, context: str = "") -> dict:
 
 
 def translate_to_english(text: str, top_k: int = 3, context: str = "") -> dict:
-    """Lunyoro/Rutooro → English — uses both MarianMT and NLLB if available."""
+    """Lunyoro/Rutooro → English — MarianMT primary."""
     text = _normalise(text.strip())
 
     marian = _mt_translate(text, "lun2en", context=context)
-    nllb   = _nllb_translate(text, "lun2en", context=context)
 
-    if marian or nllb:
+    if marian:
         return {
-            "translation":        marian or nllb,  # MarianMT is primary
-            "translation_nllb":   nllb,
-            "translation_marian": marian,
-            "method":             "neural_mt",
-            "confidence":         1.0,
-            "alternatives":       [],
+            "translation": marian,
+            "method":      "neural_mt",
+            "confidence":  1.0,
+            "alternatives": [],
         }
 
     _load_retrieval()
