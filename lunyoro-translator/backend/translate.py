@@ -11,6 +11,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 from rapidfuzz import fuzz, process
 from preprocess import load_dictionary
+from rl_corrector import correct_rl
 
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "model", "translation_index.pkl")
 MODEL_DIR  = os.path.join(os.path.dirname(__file__), "model")
@@ -119,7 +120,8 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
             max_length=512,
             early_stopping=True,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    return correct_rl(result) if direction == "en2lun" else result
 
 
 def _load_nllb(direction: str) -> bool:
@@ -175,7 +177,8 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
             max_length=512,
             early_stopping=True,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    return correct_rl(result) if direction == "en2lun" else result
 
 
 # ── public API ───────────────────────────────────────────────────────────────
