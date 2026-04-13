@@ -112,14 +112,16 @@ export default function PdfTranslator() {
             <p className="px-5 pb-4 text-sm text-gray-800 leading-relaxed">{summary.summary}</p>
           </details>
           {summary.summary_lunyoro && (
-            <div className="bg-white border border-green-200 rounded-lg p-5">
-              <p className="text-xs text-green-600 font-medium uppercase tracking-wide mb-3">Lunyoro / Rutooro Summary</p>
+            <div className="bg-white border border-green-200 rounded-lg p-5 space-y-3">
+              <p className="text-xs text-green-600 font-medium uppercase tracking-wide">Lunyoro / Rutooro Summary</p>
               <p className="text-sm text-gray-800 leading-relaxed">{summary.summary_lunyoro}</p>
               {summary.summary_lunyoro_marian && summary.summary_lunyoro_nllb && (
-                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
-                  <p className="text-xs text-gray-400 font-medium">Model comparison:</p>
-                  <p className="text-xs text-gray-600"><span className="font-medium">NLLB-200:</span> {summary.summary_lunyoro_nllb}</p>
-                  <p className="text-xs text-gray-600"><span className="font-medium">MarianMT:</span> {summary.summary_lunyoro_marian}</p>
+                <div className="pt-3 border-t border-gray-100 space-y-2">
+                  <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Model comparison</p>
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-700"><span className="font-semibold text-blue-600">MarianMT:</span> {summary.summary_lunyoro_marian}</p>
+                    <p className="text-xs text-gray-700"><span className="font-semibold text-purple-600">NLLB-200:</span> {summary.summary_lunyoro_nllb}</p>
+                  </div>
                 </div>
               )}
             </div>

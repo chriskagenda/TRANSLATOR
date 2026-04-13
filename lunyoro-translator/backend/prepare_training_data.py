@@ -122,6 +122,43 @@ def build_corpus() -> pd.DataFrame:
         lambda t: apply_rl_rule_to_text(str(t)) if isinstance(t, str) else t
     )
     corpus = corpus[(corpus["english"].str.len() >= 2) & (corpus["lunyoro"].str.len() >= 2)]
+
+    # Filter out garbage dictionary notation entries
+    # These are malformed rows like "(pl. same) . (pl. same)" with no real content
+    garbage_patterns = re.compile(
+        r'^(\[GENERAL\]\s*)?'           # optional domain tag
+        r'[\s.,;:()\[\]]*'              # leading punctuation/whitespace only
+        r'(\(pl\.?\s*(same|nil)\)'      # "(pl. same)" or "(pl. nil)"
+        r'|n\.,?\s*\(pl\.'              # "n., (pl."
+        r'|v\.,?\s*\(pl\.'              # "v., (pl."
+        r'|\(pl\.\s*\w*\))'             # any "(pl. X)"
+        r'[\s.,;:()\[\]]*$',            # trailing junk
+        re.IGNORECASE
+    )
+    # Also drop rows where English is mostly punctuation/abbreviations and very short real words
+    def is_garbage(text: str) -> bool:
+        # Strip domain tag
+        t = re.sub(r'^\[.*?\]\s*', '', str(text)).strip()
+        # Must have at least one real word (3+ alpha chars)
+        real_words = re.findall(r'[a-zA-Z]{3,}', t)
+        if not real_words:
+            return True
+        # Reject if it's just dictionary notation
+        if garbage_patterns.match(text):
+            return True
+        # Reject if >60% of tokens are abbreviations like "n.", "v.", "pl.", "adj."
+        tokens = t.split()
+        abbrev = sum(1 for tok in tokens if re.match(r'^[a-z]{1,3}\.$', tok, re.I))
+        if tokens and abbrev / len(tokens) > 0.6:
+            return True
+        return False
+
+    before = len(corpus)
+    corpus = corpus[~corpus["english"].apply(is_garbage)]
+    removed = before - len(corpus)
+    if removed:
+        print(f"  Removed {removed} garbage/notation-only rows")
+
     corpus = corpus.drop_duplicates(subset=["english", "lunyoro"])
     corpus = corpus.reset_index(drop=True)
     return corpus
