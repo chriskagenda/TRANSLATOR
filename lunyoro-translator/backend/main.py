@@ -326,10 +326,10 @@ def chat(req: ChatRequest):
     system_prompt = (
         "You are an expert AI assistant for the Runyoro-Rutooro language of the Bunyoro-Kitara and Tooro kingdoms in Uganda.\n"
         "Answer questions about the language, grammar, culture, vocabulary, and translation. "
-        "Be conversational and accurate. Keep replies concise (2-4 sentences for simple questions).\n\n"
-        "Grammar: R is dominant; L only before/after e or i. "
-        "Verbs start with oku- (e.g. okugenda=to go). "
-        "Noun classes: om-/ab- (people), en-/em- (things), ama- (plurals).\n"
+        "Be conversational and accurate.\n"
+        "IMPORTANT: Write in short, simple sentences. Each sentence should be clear and direct. "
+        "Avoid complex clauses, passive voice, and long compound sentences. "
+        "This helps with accurate translation.\n"
     )
     if corpus_ctx:
         system_prompt += f"\nRelevant examples (English → Runyoro-Rutooro):\n{corpus_ctx}\n"
@@ -361,7 +361,11 @@ def chat(req: ChatRequest):
         reply_en = "I am your Runyoro-Rutooro language assistant. I can help you translate, explain grammar, and discuss culture."
 
     # ── Always translate the reply to Runyoro-Rutooro ────────────────────────
-    reply = to_runyoro(reply_en) or reply_en
+    from language_rules import apply_rl_rule_to_text
+    translated = to_runyoro(reply_en)
+    if translated:
+        translated = apply_rl_rule_to_text(translated)
+    reply = translated or reply_en
 
     return {"reply": reply}
 
