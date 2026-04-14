@@ -75,14 +75,35 @@ def _load_retrieval():
 
 
 def _load_mt(direction: str):
-    """Lazy-load a fine-tuned MarianMT model. Returns True if available."""
+    """Lazy-load a fine-tuned MarianMT model. Auto-downloads from HuggingFace if missing."""
     if direction in _mt_available:
         return _mt_available[direction]
 
     path = os.path.join(MODEL_DIR, direction)
-    if not os.path.isdir(path):
-        _mt_available[direction] = False
-        return False
+
+    # Auto-download from HuggingFace if not present locally
+    if not os.path.isdir(path) or not any(
+        f.endswith((".safetensors", ".bin")) for f in os.listdir(path) if os.path.isdir(path)
+    ):
+        hf_repos = {
+            "en2lun": "keithtwesigye/lunyoro-en2lun",
+            "lun2en": "keithtwesigye/lunyoro-lun2en",
+        }
+        repo_id = hf_repos.get(direction)
+        if repo_id:
+            try:
+                print(f"[translate] Downloading {repo_id} from HuggingFace...")
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=path,
+                    ignore_patterns=["*.msgpack", "flax_model*", "tf_model*"],
+                )
+                print(f"[translate] Downloaded {direction} model.")
+            except Exception as e:
+                print(f"[translate] Could not download {direction} from HuggingFace: {e}")
+                _mt_available[direction] = False
+                return False
 
     try:
         from transformers import MarianMTModel, MarianTokenizer
@@ -126,14 +147,35 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
 
 
 def _load_nllb(direction: str) -> bool:
-    """Lazy-load a fine-tuned NLLB model. Returns True if available."""
+    """Lazy-load a fine-tuned NLLB model. Auto-downloads from HuggingFace if missing."""
     if direction in _nllb_available:
         return _nllb_available[direction]
 
     path = os.path.join(MODEL_DIR, f"nllb_{direction}")
-    if not os.path.isdir(path):
-        _nllb_available[direction] = False
-        return False
+
+    # Auto-download from HuggingFace if not present locally
+    if not os.path.isdir(path) or not any(
+        f.endswith((".safetensors", ".bin")) for f in os.listdir(path) if os.path.isdir(path)
+    ):
+        hf_repos = {
+            "en2lun": "keithtwesigye/lunyoro-nllb_en2lun",
+            "lun2en": "keithtwesigye/lunyoro-nllb_lun2en",
+        }
+        repo_id = hf_repos.get(direction)
+        if repo_id:
+            try:
+                print(f"[translate] Downloading {repo_id} from HuggingFace...")
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=path,
+                    ignore_patterns=["*.msgpack", "flax_model*", "tf_model*"],
+                )
+                print(f"[translate] Downloaded nllb_{direction} model.")
+            except Exception as e:
+                print(f"[translate] Could not download nllb_{direction} from HuggingFace: {e}")
+                _nllb_available[direction] = False
+                return False
 
     try:
         from transformers import NllbTokenizer, AutoModelForSeq2SeqLM
