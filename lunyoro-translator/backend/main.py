@@ -12,6 +12,46 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from translate import translate, translate_to_english, lookup_word, spellcheck, get_index_and_model
+import re as _re
+
+
+def _clean_translation(text: str) -> str:
+    """
+    Post-process a translated reply:
+    - Remove repeated comma-joined phrases (e.g. "n'ebyokurya, n'ebyokurya, ...")
+    - Deduplicate repeated sentences
+    - Strip incomplete trailing fragments
+    - Collapse excess whitespace/punctuation
+    """
+    if not text:
+        return text
+
+    # 1. Remove runs of repeated short comma/conjunction-separated fragments
+    #    e.g. "n'ebyokurya, n'ebyokurya, n'ebyokurya" → "n'ebyokurya"
+    text = _re.sub(r"((?:[^,\.]{2,40}),\s*)\1{2,}", r"\1", text)
+    # Also catch "na X, na X, na X" style
+    text = _re.sub(r"(\b\S+(?:\s+\S+){0,4})((?:,\s*\1){2,})", r"\1", text)
+
+    # 2. Deduplicate repeated sentences (keep first occurrence)
+    sentences = _re.split(r'(?<=[.!?])\s+', text.strip())
+    seen, deduped = set(), []
+    for s in sentences:
+        key = _re.sub(r'\s+', ' ', s.strip().lower())
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(s.strip())
+    text = ' '.join(deduped)
+
+    # 3. Remove trailing incomplete fragment after last full stop
+    last_end = max(text.rfind('.'), text.rfind('!'), text.rfind('?'))
+    if last_end > len(text) // 2:
+        text = text[:last_end + 1]
+
+    # 4. Collapse whitespace and fix double punctuation
+    text = _re.sub(r'\s+', ' ', text).strip()
+    text = _re.sub(r'([,\.!?])\s*\1+', r'\1', text)
+
+    return text
 
 app = FastAPI(title="Lunyoro/Rutooro Translator API")
 
@@ -368,6 +408,7 @@ def chat(req: ChatRequest):
         translated = to_runyoro(reply_en)
         if translated:
             translated = apply_rl_rule_to_text(translated)
+            translated = _clean_translation(translated)
         reply = translated or reply_en
     else:
         reply = "Sorry, the chat assistant is unavailable right now. Please try again."

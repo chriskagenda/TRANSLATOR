@@ -137,6 +137,9 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
             num_beams=4,
             max_length=512,
             early_stopping=True,
+            no_repeat_ngram_size=3,
+            repetition_penalty=1.3,
+            length_penalty=1.0,
         )
     result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     # Apply R/L rule to Lunyoro output
@@ -211,7 +214,14 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
     input_text = f"{context} ||| {text}" if context else text
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
 
-    generate_kwargs: dict = dict(num_beams=4, max_length=512, early_stopping=True)
+    generate_kwargs: dict = dict(
+        num_beams=4,
+        max_length=512,
+        early_stopping=True,
+        no_repeat_ngram_size=3,
+        repetition_penalty=1.3,
+        length_penalty=1.0,
+    )
     # Only force English BOS when translating back to English
     if direction == "lun2en":
         generate_kwargs["forced_bos_token_id"] = tokenizer.convert_tokens_to_ids(NLLB_LANG_EN)
