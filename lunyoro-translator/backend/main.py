@@ -352,20 +352,25 @@ def chat(req: ChatRequest):
     try:
         resp = _requests.post(
             "http://localhost:11434/api/chat",
-            json={"model": "qwen3.5:latest", "messages": messages, "stream": False},
-            timeout=60,
+            json={"model": "llama3.2:3b", "messages": messages, "stream": False},
+            timeout=120,
         )
         resp.raise_for_status()
         reply_en = resp.json()["message"]["content"].strip()
     except Exception as e:
-        reply_en = "I am your Runyoro-Rutooro language assistant. I can help you translate, explain grammar, and discuss culture."
+        import logging
+        logging.warning(f"Ollama call failed: {e}")
+        reply_en = None
 
     # ── Always translate the reply to Runyoro-Rutooro ────────────────────────
     from language_rules import apply_rl_rule_to_text
-    translated = to_runyoro(reply_en)
-    if translated:
-        translated = apply_rl_rule_to_text(translated)
-    reply = translated or reply_en
+    if reply_en:
+        translated = to_runyoro(reply_en)
+        if translated:
+            translated = apply_rl_rule_to_text(translated)
+        reply = translated or reply_en
+    else:
+        reply = "Sorry, the chat assistant is unavailable right now. Please try again."
 
     return {"reply": reply}
 
