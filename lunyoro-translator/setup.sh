@@ -31,8 +31,8 @@ else
     curl -fsSL https://ollama.com/install.sh | sh
 fi
 
-echo "  Pulling llama3.2:3b model (~2GB)..."
-ollama pull llama3.2:3b
+echo "  Pulling qwen3.5:latest model (~6.6GB)..."
+ollama pull qwen3.5:latest
 
 # ── 5. Done ───────────────────────────────────────────────────
 echo ""

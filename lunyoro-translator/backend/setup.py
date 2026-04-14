@@ -96,6 +96,20 @@ for direction, repo in [("nllb_en2lun", "chriskagenda/lunyoro-nllb_en2lun"),
         print(f"  ✓ {direction} model")
 
 print("\n✓ All model files present. No training needed.")
+
+# 6. Ollama + qwen3.5 for chatbot
+print("\nChecking Ollama...")
+ollama_ok = subprocess.run("ollama --version", shell=True, capture_output=True).returncode == 0
+if not ollama_ok:
+    print("  Ollama not found. Install it from https://ollama.com/download then re-run setup.")
+else:
+    # Check if qwen3.5 is already pulled
+    pulled = subprocess.run("ollama list", shell=True, capture_output=True, text=True).stdout
+    if "qwen3.5" in pulled:
+        print("  ✓ qwen3.5:latest already present")
+    else:
+        print("  Pulling qwen3.5:latest (~6.6 GB)...")
+        run("ollama pull qwen3.5:latest")
 print("""
 ==============================================
 Setup complete. To run the app:

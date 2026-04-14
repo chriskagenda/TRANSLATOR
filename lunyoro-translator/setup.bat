@@ -30,9 +30,9 @@ IF %ERRORLEVEL% NEQ 0 (
     start /wait OllamaSetup.exe
     del OllamaSetup.exe
 )
-echo   Pulling llama3.2:3b model (~2GB)...
-ollama pull llama3.2:3b
-IF %ERRORLEVEL% NEQ 0 ( echo WARNING: Could not pull llama3.2:3b. Start Ollama manually and run: ollama pull llama3.2:3b )
+echo   Pulling qwen3.5:latest model (~6.6GB)...
+ollama pull qwen3.5:latest
+IF %ERRORLEVEL% NEQ 0 ( echo WARNING: Could not pull qwen3.5:latest. Start Ollama manually and run: ollama pull qwen3.5:latest )
 
 echo.
 echo [5/5] Setup complete!

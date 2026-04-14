@@ -352,7 +352,7 @@ def chat(req: ChatRequest):
     try:
         resp = _requests.post(
             "http://localhost:11434/api/chat",
-            json={"model": "llama3.2:3b", "messages": messages, "stream": False},
+            json={"model": "qwen3.5:latest", "messages": messages, "stream": False},
             timeout=60,
         )
         resp.raise_for_status()
