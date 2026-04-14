@@ -37,9 +37,8 @@ export default function ChatPage() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const suggestions = [
-    { label: "Translate to Runyoro", prompt: "How do I say 'Welcome to our home' in Runyoro?" },
-    { label: "Grammar Help",         prompt: "Explain the difference between 'Kwebembera' and 'Kutandika'." },
-    { label: "Conversation",         prompt: "CONVERSATION_MODE" },
+    { label: "Grammar Help",   prompt: "Explain the difference between 'Kwebembera' and 'Kutandika'." },
+    { label: "Conversation",   prompt: "CONVERSATION_MODE" },
   ];
 
   // Close dropdown on outside click

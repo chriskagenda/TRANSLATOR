@@ -1,62 +1,114 @@
-# Lunyoro / Rutooro Translator
+# Lunyoro-Rutooro Translator
 
-AI-powered translation between English and Lunyoro/Rutooro using fine-tuned MarianMT neural models.
+An AI-powered translation system for the Runyoro-Rutooro language of the Bunyoro-Kitara and Tooro kingdoms in Uganda.
 
-## Quick Start (after cloning)
+## Features
 
-> Requires: Python 3.10+, Node.js 18+, Git LFS
+- English ↔ Lunyoro/Rutooro translation (MarianMT + NLLB-200)
+- Dictionary lookup with example sentences
+- AI chat assistant powered by LLaMA 3.2 (via Ollama)
+- PDF/DOCX document summarization and translation
+- Voice translation
+- Spellcheck with R/L rule enforcement
+- Domain-aware translation (Medical, Education, Agriculture, etc.)
 
-### 1. Pull model files (Git LFS)
+## Requirements
+
+- Python 3.10+
+- Node.js 18+
+- [Ollama](https://ollama.com) (for AI chat)
+
+## Quick Setup
+
+### Linux / macOS
 ```bash
-git lfs pull
+cd lunyoro-translator
+bash setup.sh
 ```
 
-### 2. Backend setup
-```bash
-cd lunyoro-translator/backend
-python setup.py
+### Windows
+```bat
+cd lunyoro-translator
+setup.bat
 ```
 
-### 3. Start backend
+Or manually:
+
 ```bash
+# 1. Python backend
+pip install -r backend/requirements.txt
+
+# 2. Frontend
+cd frontend && npm install
+
+# 3. Ollama — download from https://ollama.com/download
+ollama pull llama3.2:3b
+```
+
+## Running the App
+
+Open 3 terminals:
+
+```bash
+# Terminal 1 — Backend API (port 8000)
+cd backend
 uvicorn main:app --reload --port 8000
-```
 
-### 4. Start frontend (new terminal)
-```bash
-cd lunyoro-translator/frontend
-npm install
+# Terminal 2 — Frontend (port 3002)
+cd frontend
 npm run dev
+
+# Terminal 3 — Ollama (if not running as a service)
+ollama serve
 ```
 
-### 5. Open the app
-```
-http://localhost:3002
-```
+Then open **http://localhost:3002**
 
----
+## Training
 
-## Models
+To rebuild training data and retrain models:
 
-The fine-tuned models are stored in `backend/model/` via Git LFS — no training required after cloning.
-
-| Model | Direction | Epochs | Best val_loss |
-|-------|-----------|--------|---------------|
-| `en2lun` | English → Lunyoro/Rutooro | 10 | 2.12 |
-| `lun2en` | Lunyoro/Rutooro → English | 10 | 2.12 |
-
-## Notes for other machines
-
-- GPU (NVIDIA CUDA): translations run instantly, models load in ~5 seconds on startup
-- CPU only: translations take ~3-5 seconds each, startup takes ~30 seconds — still works fine
-- Git LFS must be installed before cloning, otherwise model files will be empty pointers
 ```bash
-python prepare_training_data.py
+cd backend
+
+# 1. Merge new submissions and rebuild training splits
+python clean_new_submissions.py
+
+# 2. Retrain MarianMT models
 python fine_tune.py --direction both --epochs 10 --batch_size 32
+
+# 3. Retrain NLLB models
+python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
 ```
 
-## Dataset
+## Architecture
 
-- 6,200 parallel sentence pairs (cleaned)
-- 1,142 dictionary entries with definitions and examples
-- 8,521 augmented training pairs (includes dictionary examples)
+```
+backend/
+  main.py                  — FastAPI server
+  translate.py             — Translation logic (MarianMT + NLLB + retrieval)
+  language_rules.py        — R/L rule, grammar, idioms, proverbs
+  prepare_training_data.py — Corpus builder with domain tagging + R/L augmentation
+  clean_new_submissions.py — Merges new crowd-sourced submissions
+  fine_tune.py             — MarianMT fine-tuning
+  fine_tune_nllb.py        — NLLB-200 fine-tuning
+  model/
+    en2lun/                — MarianMT English→Lunyoro
+    lun2en/                — MarianMT Lunyoro→English
+    nllb_en2lun/           — NLLB-200 English→Lunyoro
+    nllb_lun2en/           — NLLB-200 Lunyoro→English
+    sem_model/             — Sentence transformer for semantic search
+
+frontend/
+  components/
+    Translator.tsx         — Main translation UI
+    Dictionary.tsx         — Dictionary lookup
+    ChatPage.tsx           — AI chat assistant
+    PdfTranslator.tsx      — Document summarization
+    VoiceTranslator.tsx    — Voice input/output
+    History.tsx            — Translation history
+```
+
+## Chat (LLM)
+
+The chat assistant uses **LLaMA 3.2 3B** running locally via Ollama. It generates responses in English, which are then translated to Runyoro-Rutooro by the fine-tuned MarianMT model. No internet connection required after setup.

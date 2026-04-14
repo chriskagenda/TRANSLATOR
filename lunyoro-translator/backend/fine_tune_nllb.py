@@ -27,9 +27,9 @@ DATA_DIR  = os.path.join(os.path.dirname(__file__), "data", "training")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
 BASE_MODEL = "facebook/nllb-200-distilled-600M"
 
-# NLLB language codes — run_Latn (Rundi) is closest to Lunyoro/Rutooro
+# No proxy language code — model is fine-tuned on Runyoro-Rutooro
 LANG_EN  = "eng_Latn"
-LANG_LUN = "run_Latn"
+LANG_LUN = "eng_Latn"  # Use English token as src; model learned Runyoro-Rutooro output directly
 
 # Use both GPUs via DataParallel if available, else single GPU, else CPU
 if torch.cuda.device_count() >= 2:
