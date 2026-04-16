@@ -43,11 +43,29 @@ _dict_word_map: dict = {}   # lowercase word → entry, for O(1) lookup
 
 _mt_models     = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
 _mt_available  = {}   # {"en2lun": bool, "lun2en": bool}
-_nllb_models   = {}   # {"en2lun": (tokenizer, model), "lun2en": (tokenizer, model)}
+_nllb_models   = {}   # {"en2lun": (tokenizer, model, device), "lun2en": ...}
 _nllb_available = {}  # {"en2lun": bool, "lun2en": bool}
+_nllb_whitelist: list | None = None  # token ID whitelist loaded once
 
 NLLB_LANG_EN  = "eng_Latn"
-NLLB_LANG_LUN = "eng_Latn"  # Fine-tuned on Runyoro-Rutooro — no proxy language code needed
+NLLB_LANG_LUN = "run_Latn"  # Rundi — closest supported code to Lunyoro/Rutooro
+
+
+def _load_nllb_whitelist() -> list | None:
+    """Load the Lunyoro token whitelist, build it if missing."""
+    global _nllb_whitelist
+    if _nllb_whitelist is not None:
+        return _nllb_whitelist
+    whitelist_path = os.path.join(MODEL_DIR, "lunyoro_token_whitelist.json")
+    if os.path.exists(whitelist_path):
+        import json
+        with open(whitelist_path) as f:
+            _nllb_whitelist = json.load(f)
+        print(f"[translate] Loaded token whitelist: {len(_nllb_whitelist):,} allowed tokens")
+    else:
+        print("[translate] Token whitelist not found — run build_lunyoro_vocab.py to generate it")
+        _nllb_whitelist = []
+    return _nllb_whitelist
 
 
 # ── loaders ──────────────────────────────────────────────────────────────────
@@ -209,7 +227,8 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
         return None
     import torch
     tokenizer, model, device = _nllb_models[direction]
-    src_lang = NLLB_LANG_EN
+    src_lang = NLLB_LANG_EN if direction == "en2lun" else NLLB_LANG_LUN
+    tgt_lang = NLLB_LANG_LUN if direction == "en2lun" else NLLB_LANG_EN
     tokenizer.src_lang = src_lang
     input_text = f"{context} ||| {text}" if context else text
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
@@ -222,9 +241,18 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
         repetition_penalty=1.3,
         length_penalty=1.0,
     )
-    # Only force English BOS when translating back to English
-    if direction == "lun2en":
-        generate_kwargs["forced_bos_token_id"] = tokenizer.convert_tokens_to_ids(NLLB_LANG_EN)
+    # Force the target language token so NLLB generates in the correct language
+    generate_kwargs["forced_bos_token_id"] = tokenizer.convert_tokens_to_ids(tgt_lang)
+
+    # For en2lun: suppress non-Lunyoro tokens to prevent Swahili/Kinyarwanda bleed
+    if direction == "en2lun":
+        whitelist = _load_nllb_whitelist()
+        if whitelist:
+            vocab_size = getattr(getattr(model, "module", model).config, "vocab_size", 256204)
+            allowed_set = set(whitelist)
+            suppress = [i for i in range(vocab_size) if i not in allowed_set]
+            if suppress:
+                generate_kwargs["suppress_tokens"] = suppress
 
     with torch.no_grad():
         output_ids = model.generate(**inputs, **generate_kwargs)
@@ -322,7 +350,7 @@ def translate_to_english(text: str, top_k: int = 3, context: str = "") -> dict:
 
     if marian or nllb:
         return {
-            "translation":        marian or nllb,  # MarianMT is primary
+            "translation":        nllb or marian,  # NLLB-200 is primary for lun→en
             "translation_nllb":   nllb,
             "translation_marian": marian,
             "method":             "neural_mt",
@@ -638,6 +666,19 @@ def spellcheck(text: str) -> list:
 
     for token in tokens:
         lower = token.lower()
+
+        # Skip English-looking words (lun→en input may contain proper nouns, code-switching)
+        if lower in {"the", "a", "an", "is", "are", "was", "were", "and", "or", "of", "in", "to"}:
+            continue
+
+        # Valid Bantu morphological prefixes — never flag these as misspelled
+        _BANTU_PREFIXES = (
+            "oku", "okw", "omu", "aba", "obu", "otu", "ama", "eri",
+            "ebi", "eki", "aka", "aga", "oru", "en", "em", "in", "im",
+            "ni", "ba", "ka", "ku", "mu", "bu", "tu", "bi", "ki", "ga",
+        )
+        if any(lower.startswith(p) for p in _BANTU_PREFIXES) and len(lower) >= 4:
+            continue
         # Apply R/L rule to the input token before checking
         from language_rules import apply_rl_rule
         corrected_token = apply_rl_rule(lower)
@@ -671,7 +712,7 @@ def spellcheck(text: str) -> list:
             lower, candidate_pool,
             scorer=fuzz.ratio,
             limit=5,
-            score_cutoff=55,
+            score_cutoff=75,
         )
         seen: set[str] = set()
         top: list[str] = []

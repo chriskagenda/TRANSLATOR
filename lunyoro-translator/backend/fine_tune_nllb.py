@@ -121,8 +121,8 @@ def train_nllb(direction: str, epochs: int = 10, batch_size: int = 4, lr: float 
     effective_batch = per_gpu * (torch.cuda.device_count() if USE_MULTI_GPU else 1) * accum_steps
     print(f"Effective batch size: {effective_batch} ({per_gpu}/GPU × {torch.cuda.device_count() if USE_MULTI_GPU else 1} GPUs × {accum_steps} accum)")
 
-    train_ds = NLLBDataset(train_df, tokenizer, src_col, tgt_col, src_lang, tgt_lang)
-    val_ds   = NLLBDataset(val_df,   tokenizer, src_col, tgt_col, src_lang, tgt_lang)
+    train_ds = NLLBDataset(train_df, tokenizer, src_col, tgt_col, src_lang, tgt_lang, max_len=128)
+    val_ds   = NLLBDataset(val_df,   tokenizer, src_col, tgt_col, src_lang, tgt_lang, max_len=128)
 
     train_loader = DataLoader(train_ds, batch_size=per_gpu, shuffle=True,  num_workers=0, pin_memory=True)
     val_loader   = DataLoader(val_ds,   batch_size=per_gpu, shuffle=False, num_workers=0, pin_memory=True)
@@ -189,9 +189,9 @@ def train_nllb(direction: str, epochs: int = 10, batch_size: int = 4, lr: float 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--direction", choices=["en2lun", "lun2en", "both"], default="both")
-    parser.add_argument("--epochs",      type=int,   default=10)
-    parser.add_argument("--batch_size",  type=int,   default=4)
-    parser.add_argument("--accum_steps", type=int,   default=8)
+    parser.add_argument("--epochs",      type=int,   default=5)
+    parser.add_argument("--batch_size",  type=int,   default=8)
+    parser.add_argument("--accum_steps", type=int,   default=4)
     parser.add_argument("--lr",          type=float, default=5e-5)
     args = parser.parse_args()
 

@@ -12,6 +12,7 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from translate import translate, translate_to_english, lookup_word, spellcheck, get_index_and_model
+from translate import _mt_translate, _nllb_translate
 import re as _re
 
 
@@ -272,11 +273,26 @@ async def summarize_pdf(file: UploadFile = File(...)):
 
     summary = " ".join(top_sentences)
 
-    # Translate the English summary to Lunyoro using both models
+    # Translate the English summary to Lunyoro sentence-by-sentence
     from translate import _mt_translate, _nllb_translate
-    summary_lunyoro_marian = _mt_translate(summary, "en2lun") or ""
-    summary_lunyoro_nllb   = _nllb_translate(summary, "en2lun") or ""
-    # Primary = MarianMT (fine-tuned on Runyoro-Rutooro), fallback to NLLB
+    import re as _re2
+
+    def _translate_summary(text: str, use_nllb: bool) -> str:
+        sentences = _re2.split(r'(?<=[.!?])\s+', text.strip())
+        out = []
+        for sent in sentences:
+            if len(sent.strip()) < 3:
+                out.append(sent)
+                continue
+            if use_nllb:
+                result = _nllb_translate(sent, "en2lun") or _mt_translate(sent, "en2lun") or sent
+            else:
+                result = _mt_translate(sent, "en2lun") or sent
+            out.append(result)
+        return " ".join(out)
+
+    summary_lunyoro_marian = _translate_summary(summary, use_nllb=False)
+    summary_lunyoro_nllb   = _translate_summary(summary, use_nllb=True)
     summary_lunyoro = summary_lunyoro_marian or summary_lunyoro_nllb
 
     save_history({
@@ -333,8 +349,45 @@ def chat(req: ChatRequest):
         "POL": "Politics",             "ALL": "All Sectors",
     }
 
-    def to_runyoro(text: str) -> str:
-        return _mt_translate(text, "en2lun") or text
+    def to_runyoro_marian(text: str) -> str:
+        """Translate using MarianMT only (primary)."""
+        import re as _r
+        lines = text.split("\n")
+        out = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                out.append(""); continue
+            bullet_match = _r.match(r'^([*\-•]\s*|\d+\.\s*)', stripped)
+            marker = bullet_match.group(0) if bullet_match else ""
+            content = stripped[len(marker):].strip() if bullet_match else stripped
+            if not content:
+                out.append(line); continue
+            sentences = _r.split(r'(?<=[.!?])\s+', content)
+            out.append(marker + " ".join(
+                _mt_translate(s, "en2lun") or s for s in sentences if len(s.strip()) >= 3
+            ))
+        return "\n".join(out)
+
+    def to_runyoro_nllb(text: str) -> str:
+        """Translate using NLLB-200 only (comparison)."""
+        import re as _r
+        lines = text.split("\n")
+        out = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                out.append(""); continue
+            bullet_match = _r.match(r'^([*\-•]\s*|\d+\.\s*)', stripped)
+            marker = bullet_match.group(0) if bullet_match else ""
+            content = stripped[len(marker):].strip() if bullet_match else stripped
+            if not content:
+                out.append(line); continue
+            sentences = _r.split(r'(?<=[.!?])\s+', content)
+            out.append(marker + " ".join(
+                _nllb_translate(s, "en2lun") or s for s in sentences if len(s.strip()) >= 3
+            ))
+        return "\n".join(out)
 
     # ── Retrieve relevant corpus context ─────────────────────────────────────
     def corpus_context(query: str, k: int = 2) -> str:
@@ -364,12 +417,11 @@ def chat(req: ChatRequest):
     dict_ctx     = dict_context(sector) if sector else ""
 
     system_prompt = (
-        "You are an expert AI assistant for the Runyoro-Rutooro language of the Bunyoro-Kitara and Tooro kingdoms in Uganda.\n"
-        "Answer questions about the language, grammar, culture, vocabulary, and translation. "
-        "Be conversational and accurate.\n"
-        "IMPORTANT: Write in short, simple sentences. Each sentence should be clear and direct. "
-        "Avoid complex clauses, passive voice, and long compound sentences. "
-        "This helps with accurate translation.\n"
+        "You are an expert AI assistant for the Runyoro-Rutooro language of the Bunyoro-Kitara and Tooro kingdoms in Uganda. /no_think\n"
+        "Answer questions about the language, grammar, culture, vocabulary, and translation.\n"
+        "Give detailed, helpful answers with examples where relevant.\n"
+        "Use numbered lists or bullet points when listing items.\n"
+        "Write in clear English sentences. Do not use overly complex grammar.\n"
     )
     if corpus_ctx:
         system_prompt += f"\nRelevant examples (English → Runyoro-Rutooro):\n{corpus_ctx}\n"
@@ -392,8 +444,17 @@ def chat(req: ChatRequest):
     try:
         resp = _requests.post(
             "http://localhost:11434/api/chat",
-            json={"model": "llama3.2:3b", "messages": messages, "stream": False},
-            timeout=120,
+            json={
+                "model": "llama3.2:3b",
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "num_ctx": 2048,
+                    "num_predict": 512,
+                    "temperature": 0.7,
+                }
+            },
+            timeout=300,
         )
         resp.raise_for_status()
         reply_en = resp.json()["message"]["content"].strip()
@@ -402,18 +463,27 @@ def chat(req: ChatRequest):
         logging.warning(f"Ollama call failed: {e}")
         reply_en = None
 
-    # ── Always translate the reply to Runyoro-Rutooro ────────────────────────
+    # ── Translate reply with both models for comparison ──────────────────────
     from language_rules import apply_rl_rule_to_text
     if reply_en:
-        translated = to_runyoro(reply_en)
-        if translated:
-            translated = apply_rl_rule_to_text(translated)
-            translated = _clean_translation(translated)
-        reply = translated or reply_en
+        marian_out = to_runyoro_marian(reply_en)
+        nllb_out   = to_runyoro_nllb(reply_en)
+        if marian_out:
+            marian_out = apply_rl_rule_to_text(_clean_translation(marian_out))
+        if nllb_out:
+            nllb_out = apply_rl_rule_to_text(_clean_translation(nllb_out))
     else:
-        reply = "Sorry, the chat assistant is unavailable right now. Please try again."
+        marian_out = nllb_out = None
 
-    return {"reply": reply}
+    if not marian_out and not nllb_out:
+        return {"reply": "Sorry, the chat assistant is unavailable right now. Please try again.",
+                "reply_marian": None, "reply_nllb": None}
+
+    return {
+        "reply":         marian_out or nllb_out,  # MarianMT is primary
+        "reply_marian":  marian_out,
+        "reply_nllb":    nllb_out,
+    }
 
 @app.get("/language-rules")
 def get_language_rules():

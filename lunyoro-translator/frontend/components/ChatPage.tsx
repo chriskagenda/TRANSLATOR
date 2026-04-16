@@ -7,6 +7,8 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type ChatItem = {
   role: "user" | "assistant";
   content: string;
+  reply_marian?: string | null;
+  reply_nllb?: string | null;
 };
 
 const SECTORS = [
@@ -85,6 +87,8 @@ export default function ChatPage() {
       const botMessage: ChatItem = {
         role: "assistant",
         content: data.reply || "No response returned.",
+        reply_marian: data.reply_marian,
+        reply_nllb: data.reply_nllb,
       };
 
       setHistory([...newHistory, botMessage]);
@@ -183,15 +187,34 @@ export default function ChatPage() {
               key={index}
               className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}
             >
-              <div
-                className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                  item.role === "user"
-                    ? "bg-blue-600 text-white rounded-tr-none"
-                    : "bg-gray-100 text-gray-800 rounded-tl-none border border-gray-200"
-                }`}
-              >
-                {item.content}
-              </div>
+              {item.role === "user" ? (
+                <div className="max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm bg-blue-600 text-white rounded-tr-none">
+                  {item.content}
+                </div>
+              ) : (item.reply_marian || item.reply_nllb) ? (
+                <div className="flex flex-col gap-2 max-w-[95%] w-full">
+                  <div className="flex gap-2 w-full">
+                    {/* MarianMT — primary */}
+                    <div className="flex-1 flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold text-blue-600 uppercase tracking-wide px-1">MarianMT</span>
+                      <div className="px-4 py-3 rounded-2xl rounded-tl-none text-sm leading-relaxed shadow-sm bg-blue-50 text-gray-800 border border-blue-200 whitespace-pre-wrap">
+                        {item.reply_marian || "—"}
+                      </div>
+                    </div>
+                    {/* NLLB-200 — comparison */}
+                    <div className="flex-1 flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold text-purple-600 uppercase tracking-wide px-1">NLLB-200</span>
+                      <div className="px-4 py-3 rounded-2xl rounded-tl-none text-sm leading-relaxed shadow-sm bg-purple-50 text-gray-800 border border-purple-200 whitespace-pre-wrap">
+                        {item.reply_nllb || "—"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm bg-gray-100 text-gray-800 rounded-tl-none border border-gray-200 whitespace-pre-wrap">
+                  {item.content}
+                </div>
+              )}
             </div>
           ))
         )}

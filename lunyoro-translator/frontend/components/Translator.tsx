@@ -86,11 +86,9 @@ export default function Translator() {
   }
 
   useEffect(() => {
-    if (direction !== "lun→en") { setMisspelled([]); return; }
-    if (spellTimer.current) clearTimeout(spellTimer.current);
-    spellTimer.current = setTimeout(() => runSpellcheck(input), 700);
-    return () => { if (spellTimer.current) clearTimeout(spellTimer.current); };
-  }, [input, direction, runSpellcheck]);
+    // Spellcheck disabled for lun→en — Lunyoro grammar is always accepted as-is
+    setMisspelled([]);
+  }, [input, direction]);
 
   // ── build HTML with red wavy underlines ──────────────────────────────────────
   function escHtml(s: string) {
