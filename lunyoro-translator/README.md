@@ -9,8 +9,27 @@ An AI-powered translation system for the Runyoro-Rutooro language of the Bunyoro
 - AI chat assistant powered by LLaMA 3.2 (via Ollama)
 - PDF/DOCX document summarization and translation
 - Voice translation
-- Spellcheck with R/L rule enforcement
+- Spellcheck
 - Domain-aware translation (Medical, Education, Agriculture, etc.)
+- Model comparison view (MarianMT vs NLLB-200)
+
+## Dataset
+
+- ~53,948 English-Lunyoro sentence pairs
+- Sources: crowd-sourced submissions, dictionary entries, sentence corpora
+- Augmented via back-translation using the fine-tuned lun2en model
+- Cleaned with quality filters: deduplication, length checks, hallucination detection, round-trip consistency
+
+## Models
+
+All models are hosted on HuggingFace under [keithtwesigye](https://huggingface.co/keithtwesigye):
+
+| Model | Repo | Description |
+|-------|------|-------------|
+| MarianMT en→lun | `keithtwesigye/lunyoro-en2lun` | English to Lunyoro |
+| MarianMT lun→en | `keithtwesigye/lunyoro-lun2en` | Lunyoro to English |
+| NLLB-200 en→lun | `keithtwesigye/lunyoro-nllb_en2lun` | English to Lunyoro (NLLB) |
+| NLLB-200 lun→en | `keithtwesigye/lunyoro-nllb_lun2en` | Lunyoro to English (NLLB) |
 
 ## Requirements
 
@@ -38,10 +57,14 @@ Or manually:
 # 1. Python backend
 pip install -r backend/requirements.txt
 
-# 2. Frontend
-cd frontend && npm install
+# 2. Download models from HuggingFace
+cd backend
+python download_models.py
 
-# 3. Ollama — download from https://ollama.com/download
+# 3. Frontend
+cd ../frontend && npm install
+
+# 4. Ollama — download from https://ollama.com/download
 ollama pull llama3.2:3b
 ```
 
@@ -74,10 +97,14 @@ cd backend
 # 1. Merge new submissions and rebuild training splits
 python clean_new_submissions.py
 
-# 2. Retrain MarianMT models
+# 2. (Optional) Back-translation augmentation
+python back_translate.py
+python clean_backtranslated.py
+
+# 3. Retrain MarianMT models
 python fine_tune.py --direction both --epochs 10 --batch_size 32
 
-# 3. Retrain NLLB models
+# 4. Retrain NLLB models
 python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
 ```
 
@@ -85,28 +112,32 @@ python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
 
 ```
 backend/
-  main.py                  — FastAPI server
-  translate.py             — Translation logic (MarianMT + NLLB + retrieval)
-  language_rules.py        — R/L rule, grammar, idioms, proverbs
-  prepare_training_data.py — Corpus builder with domain tagging + R/L augmentation
-  clean_new_submissions.py — Merges new crowd-sourced submissions
-  fine_tune.py             — MarianMT fine-tuning
-  fine_tune_nllb.py        — NLLB-200 fine-tuning
+  main.py                    — FastAPI server
+  translate.py               — Translation logic (MarianMT + NLLB + retrieval)
+  language_rules.py          — Grammar rules, idioms, proverbs, empaako
+  prepare_training_data.py   — Corpus builder with domain tagging
+  clean_new_submissions.py   — Merges new crowd-sourced submissions
+  clean_extra.py             — Merges Excel dictionary datasets
+  back_translate.py          — Back-translation augmentation
+  clean_backtranslated.py    — Quality filtering for synthetic pairs
+  fine_tune.py               — MarianMT fine-tuning
+  fine_tune_nllb.py          — NLLB-200 fine-tuning
+  download_models.py         — Downloads all models from HuggingFace
   model/
-    en2lun/                — MarianMT English→Lunyoro
-    lun2en/                — MarianMT Lunyoro→English
-    nllb_en2lun/           — NLLB-200 English→Lunyoro
-    nllb_lun2en/           — NLLB-200 Lunyoro→English
-    sem_model/             — Sentence transformer for semantic search
+    en2lun/                  — MarianMT English→Lunyoro
+    lun2en/                  — MarianMT Lunyoro→English
+    nllb_en2lun/             — NLLB-200 English→Lunyoro
+    nllb_lun2en/             — NLLB-200 Lunyoro→English
+    sem_model/               — Sentence transformer for semantic search
 
 frontend/
   components/
-    Translator.tsx         — Main translation UI
-    Dictionary.tsx         — Dictionary lookup
-    ChatPage.tsx           — AI chat assistant
-    PdfTranslator.tsx      — Document summarization
-    VoiceTranslator.tsx    — Voice input/output
-    History.tsx            — Translation history
+    Translator.tsx           — Main translation UI
+    Dictionary.tsx           — Dictionary lookup
+    ChatPage.tsx             — AI chat assistant
+    PdfTranslator.tsx        — Document summarization
+    VoiceTranslator.tsx      — Voice input/output
+    History.tsx              — Translation history
 ```
 
 ## Chat (LLM)
