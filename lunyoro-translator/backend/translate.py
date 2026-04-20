@@ -160,10 +160,6 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
             length_penalty=1.0,
         )
     result = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    # Apply R/L rule to Lunyoro output
-    if direction == "en2lun" and result:
-        from language_rules import apply_rl_rule_to_text
-        result = apply_rl_rule_to_text(result)
     return result
 
 
@@ -262,10 +258,6 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
     if _is_notation_garbage(nllb_result):
         return None
 
-    # Apply R/L rule to Lunyoro output
-    if direction == "en2lun" and nllb_result:
-        from language_rules import apply_rl_rule_to_text
-        nllb_result = apply_rl_rule_to_text(nllb_result)
     return nllb_result
 
 
@@ -678,13 +670,6 @@ def spellcheck(text: str) -> list:
             "ni", "ba", "ka", "ku", "mu", "bu", "tu", "bi", "ki", "ga",
         )
         if any(lower.startswith(p) for p in _BANTU_PREFIXES) and len(lower) >= 4:
-            continue
-        # Apply R/L rule to the input token before checking
-        from language_rules import apply_rl_rule
-        corrected_token = apply_rl_rule(lower)
-        if corrected_token != lower:
-            # The token violates R/L rule — suggest the corrected form
-            misspelled.append({"word": token, "suggestions": [corrected_token]})
             continue
 
         if len(lower) < 3 or lower in _corpus_vocab:

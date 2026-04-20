@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "name": "Auto-Update Docs on Source Change",
+  "description": "Watches Python and TypeScript source files, as well as config and setup files. When any of these change, asks the agent to reflect those changes in the README or any docs folder.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.py",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/setup.bat",
+      "**/setup.sh",
+      "**/requirements.txt",
+      "**/package.json"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A source file was just edited in this project. Review the change and update the documentation accordingly. Check lunyoro-translator/README.md and any files under a /docs folder if one exists. Only update docs sections that are affected by the change — for example, if a new feature, endpoint, or function was added or modified, reflect that in the relevant part of the docs. Keep the documentation accurate and concise."
+  }
+}

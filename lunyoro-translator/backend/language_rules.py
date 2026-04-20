@@ -3,65 +3,6 @@ Runyoro-Rutooro language rules extracted from runyorodictionary.com
 Used for grammar guidance, intent detection, and chat context.
 """
 
-# ── R/L Usage Rule ────────────────────────────────────────────────────────────
-RL_RULE = """
-In Runyoro-Rutooro, R is the dominant consonant. L is only used:
-a) When the initial position has a neighbouring vowel of 'e' or 'i'. E.g: leero, liiso, liino.
-b) When a neighbouring 'e' or 'i' starts with vowel a, o, or u. E.g: aliire, oliire, tuliire, muliire.
-L does NOT follow 'e' or 'i' — use R instead. E.g: eriire, iriire.
-All other positions use R only.
-"""
-
-
-def apply_rl_rule(word: str) -> str:
-    """
-    Apply the Runyoro-Rutooro R/L rule to correct a word.
-
-    Rule:
-    - L is valid ONLY when:
-        a) It is at the start of a word AND followed by 'e' or 'i'  (leero, liiso)
-        b) It is preceded by a vowel (a, e, i, o, u) AND followed by 'e' or 'i' (aliire, oliire)
-    - In all other positions, L must be replaced with R.
-    """
-    if not word:
-        return word
-
-    w = list(word.lower())
-    vowels = set("aeiou")
-    result = []
-
-    for i, ch in enumerate(w):
-        if ch != 'l':
-            result.append(ch)
-            continue
-
-        prev = w[i - 1] if i > 0 else None
-        nxt  = w[i + 1] if i < len(w) - 1 else None
-
-        # Rule a: word-initial L followed by e or i → keep L
-        if i == 0 and nxt in ('e', 'i'):
-            result.append('l')
-        # Rule b: L preceded by a vowel AND followed by e or i → keep L
-        elif prev in vowels and nxt in ('e', 'i'):
-            result.append('l')
-        # All other positions → replace with R
-        else:
-            result.append('r')
-
-    # Preserve original capitalisation
-    corrected = ''.join(result)
-    if word[0].isupper():
-        corrected = corrected[0].upper() + corrected[1:]
-    return corrected
-
-
-def apply_rl_rule_to_text(text: str) -> str:
-    """Apply the R/L rule to every word in a text string."""
-    import re
-    def fix_word(m):
-        return apply_rl_rule(m.group(0))
-    return re.sub(r"[A-Za-z']+", fix_word, text)
-
 # ── Empaako (Honorific Names) ─────────────────────────────────────────────────
 EMPAAKO = {
     "Atwooki":  "From Atwok — shining star. Given to a child born on a night with stars.",
