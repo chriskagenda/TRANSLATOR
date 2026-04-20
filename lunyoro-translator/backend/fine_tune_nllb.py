@@ -105,7 +105,10 @@ def train_nllb(direction: str, epochs: int = 10, batch_size: int = 4, lr: float 
 
     print(f"Loading {BASE_MODEL}...")
     tokenizer = NllbTokenizer.from_pretrained(BASE_MODEL)
-    model = AutoModelForSeq2SeqLM.from_pretrained(BASE_MODEL).to(DEVICE)
+    model = AutoModelForSeq2SeqLM.from_pretrained(BASE_MODEL)
+    # Label smoothing: prevents overconfidence, improves generalization on low-resource languages
+    model.config.label_smoothing_factor = 0.1
+    model = model.to(DEVICE)
 
     # Gradient checkpointing: trades compute for memory (~30% slower, ~40% less VRAM)
     raw_model = model

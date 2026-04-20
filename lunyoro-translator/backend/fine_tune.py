@@ -87,7 +87,10 @@ def train_direction(direction: str, epochs: int = 10, batch_size: int = 16, lr: 
     # Load tokenizer and model
     print(f"Loading base model: {base_model}")
     tokenizer = MarianTokenizer.from_pretrained(base_model)
-    model = MarianMTModel.from_pretrained(base_model).to(DEVICE)
+    model = MarianMTModel.from_pretrained(base_model)
+    # Label smoothing: prevents overconfidence, improves generalization on low-resource languages
+    model.config.label_smoothing_factor = 0.1
+    model = model.to(DEVICE)
 
     # Use all available GPUs
     if NUM_GPUS > 1:
