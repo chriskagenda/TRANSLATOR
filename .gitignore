@@ -7,8 +7,9 @@ venv/
 .venv/
 
 # Model files (large binaries tracked via Git LFS)
-lunyoro-translator/backend/data/cleaned/
-lunyoro-translator/backend/data/training/
+# Dataset CSVs are tracked so they can be versioned and shared
+# lunyoro-translator/backend/data/cleaned/
+# lunyoro-translator/backend/data/training/
 lunyoro-translator/backend/history.json
 # NLLB models too large for GitHub LFS — stored on HuggingFace Hub
 lunyoro-translator/backend/model/nllb_en2lun/

@@ -46,12 +46,40 @@ def back_translate():
         inputs = tokenizer(batch, return_tensors="pt", truncation=True,
                            padding=True, max_length=256).to(DEVICE)
         with torch.no_grad():
-            output_ids = model.generate(**inputs, num_beams=2, max_length=512)
+            output_ids = model.generate(
+                **inputs, num_beams=4, max_length=512,
+                no_repeat_ngram_size=3, repetition_penalty=1.3,
+            )
         for j, ids in enumerate(output_ids):
-            en = tokenizer.decode(ids, skip_special_tokens=True).strip()
+            en  = tokenizer.decode(ids, skip_special_tokens=True).strip()
             lun = batch[j].strip()
-            if en and lun and en.lower() != lun.lower() and len(en) > 5:
-                synthetic.append({"english": en, "lunyoro": lun})
+
+            # ── quality filters ──────────────────────────────────────────────
+            if not en or not lun:
+                continue
+            # Must be real English (not a copy of Lunyoro)
+            if en.lower() == lun.lower():
+                continue
+            # Minimum length
+            if len(en) < 8 or len(lun) < 8:
+                continue
+            # Reject if English output is suspiciously short vs Lunyoro input
+            # (model likely failed to translate)
+            if len(en.split()) < len(lun.split()) * 0.25:
+                continue
+            # Reject repeated word runs (hallucination signal)
+            words = en.lower().split()
+            if len(words) > 3:
+                bigrams = list(zip(words, words[1:]))
+                repeat_ratio = len([b for b in bigrams if b[0] == b[1]]) / len(bigrams)
+                if repeat_ratio > 0.3:
+                    continue
+            # Reject if output contains mostly non-ASCII (model output garbage)
+            ascii_ratio = sum(1 for c in en if ord(c) < 128) / max(len(en), 1)
+            if ascii_ratio < 0.85:
+                continue
+
+            synthetic.append({"english": en, "lunyoro": lun})
 
         if (i // BATCH) % 10 == 0:
             print(f"  {i}/{len(lunyoro_sentences)} done...")
