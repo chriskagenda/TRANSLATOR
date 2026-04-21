@@ -66,8 +66,8 @@ print('HuggingFace upload complete.')
     env["HF_TOKEN"] = HF_TOKEN
     subprocess.run([PY, upload_script], cwd=BASE, env=env)
 
-# Git push
+# Git push — force push, never pull
 run(["git", "add", "-A"], cwd=REPO)
 run(["git", "commit", "-m", "Retrain NLLB on clean 46k corpus + index rebuild"], cwd=REPO)
-run(["git", "push"], cwd=REPO)
+run(["git", "push", "--force-with-lease"], cwd=REPO)
 print("\nAll done. Everything pushed.")
