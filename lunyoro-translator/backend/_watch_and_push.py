@@ -138,7 +138,7 @@ run(["git", "add", "-A"], cwd=REPO)
 run(["git", "commit", "-m",
      "Retrain on clean 59k corpus (round-trip + semantic filtered) — replaces dirty models"],
     cwd=REPO)
-run(["git", "push"], cwd=REPO)
+run(["git", "push", "--force-with-lease"], cwd=REPO)
 
 print("\n" + "=" * 60)
 print("ALL DONE. Clean models pushed to HuggingFace, LFS, and git.")
