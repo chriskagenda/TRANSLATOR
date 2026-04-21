@@ -108,6 +108,22 @@ python fine_tune.py --direction both --epochs 10 --batch_size 32
 python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
 ```
 
+## Publishing Models to HuggingFace
+
+To push README files to the 4 HuggingFace model repos, set your HuggingFace token as an environment variable before running the script:
+
+```bash
+# Linux / macOS
+export HF_TOKEN=your_token_here
+python backend/_push_hf_readmes.py
+
+# Windows
+set HF_TOKEN=your_token_here
+python backend\_push_hf_readmes.py
+```
+
+You can generate a token at https://huggingface.co/settings/tokens (needs write access to the target repos).
+
 ## Architecture
 
 ```
