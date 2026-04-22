@@ -63,22 +63,55 @@ def build_corpus() -> pd.DataFrame:
 
     corpus = pd.concat([pairs, ex1, ex2, word_pairs], ignore_index=True)
 
-    # 4. Any extra datasets dropped into data/extra/
-    extra_dir = os.path.join(DATA_DIR, "extra")
-    if os.path.isdir(extra_dir):
-        for fname in os.listdir(extra_dir):
-            if fname.endswith(".csv"):
-                fpath = os.path.join(extra_dir, fname)
-                try:
-                    extra = pd.read_csv(fpath).rename(columns=str.lower)
-                    if "english" in extra.columns and "lunyoro" in extra.columns:
-                        extra = extra[["english", "lunyoro"]].dropna()
-                        corpus = pd.concat([corpus, extra], ignore_index=True)
-                        print(f"  Loaded extra dataset: {fname} ({len(extra)} pairs)")
-                    else:
-                        print(f"  Skipped {fname} — needs 'english' and 'lunyoro' columns")
-                except Exception as e:
-                    print(f"  Skipped {fname} — {e}")
+    # 4. New sentence pairs from April submission
+    sent_path = os.path.join(CLEAN_DIR, "runyoro_english_sentences_clean.csv")
+    if os.path.exists(sent_path):
+        sent_df = pd.read_csv(sent_path).fillna("")
+        sent_df = sent_df[["english", "lunyoro"]].dropna()
+        sent_df = sent_df[(sent_df["english"].str.len() >= 3) & (sent_df["lunyoro"].str.len() >= 3)]
+        corpus = pd.concat([corpus, sent_df], ignore_index=True)
+        print(f"  Loaded runyoro_english_sentences_clean.csv ({len(sent_df)} pairs)")
+
+    # 5. Rutooro dictionary — generate pairs from word + definition + examples
+    dict_path = os.path.join(CLEAN_DIR, "rutooro_dictionary_clean.csv")
+    if os.path.exists(dict_path):
+        rdict = pd.read_csv(dict_path).fillna("")
+        dict_pairs = []
+
+        # word (lunyoro) <-> definition (english)
+        for _, row in rdict.iterrows():
+            word = str(row.get("word", "")).strip()
+            defn = str(row.get("definition", "")).strip()
+            ex_r = str(row.get("example_runyoro", "")).strip()
+            ex_t = str(row.get("example_rutooro", "")).strip()
+
+            if word and defn and len(defn) >= 5:
+                dict_pairs.append({"english": defn, "lunyoro": word})
+
+            # example sentence pairs
+            if ex_r and ex_t and len(ex_r) >= 5 and len(ex_t) >= 5:
+                dict_pairs.append({"english": ex_t, "lunyoro": ex_r})
+
+        dict_pairs_df = pd.DataFrame(dict_pairs).drop_duplicates()
+        corpus = pd.concat([corpus, dict_pairs_df], ignore_index=True)
+        print(f"  Loaded rutooro_dictionary_clean.csv ({len(dict_pairs_df)} pairs)")
+
+    # 6. Small extra cleaned CSVs (empaako, idioms, numbers, interjections, proverbs)
+    small_extras = [
+        "empaako_pairs.csv", "idioms_pairs.csv", "numbers_pairs.csv",
+        "interjections_pairs_clean.csv", "proverbs_pairs_clean.csv",
+    ]
+    for fname in small_extras:
+        fpath = os.path.join(CLEAN_DIR, fname)
+        if os.path.exists(fpath):
+            try:
+                extra = pd.read_csv(fpath).rename(columns=str.lower)
+                if "english" in extra.columns and "lunyoro" in extra.columns:
+                    extra = extra[["english", "lunyoro"]].dropna()
+                    corpus = pd.concat([corpus, extra], ignore_index=True)
+                    print(f"  Loaded {fname} ({len(extra)} pairs)")
+            except Exception as e:
+                print(f"  Skipped {fname} — {e}")
 
     # 5. R/L rule augmentation — teach the model correct Lunyoro orthography
     # For every pair where the Lunyoro side contains L, add:

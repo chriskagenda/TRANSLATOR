@@ -57,6 +57,6 @@ python fine_tune.py --direction both --epochs 10 --batch_size 32
 
 ## Dataset
 
-- 6,200 parallel sentence pairs (cleaned)
-- 1,142 dictionary entries with definitions and examples
-- 8,521 augmented training pairs (includes dictionary examples)
+- ~53,948 English-Lunyoro sentence pairs after augmentation
+- Sources: `english_nyoro_clean.csv`, `runyoro_english_sentences_clean.csv`, `rutooro_dictionary_clean.csv`, `word_entries_clean.csv`, plus empaako/idioms/numbers/interjections/proverbs CSVs
+- Augmented via back-translation and R/L rule correction

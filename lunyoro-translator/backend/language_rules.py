@@ -126,3 +126,40 @@ def lookup_interjection(word: str) -> str | None:
 def lookup_idiom(phrase: str) -> str | None:
     """Return the meaning of a Lunyoro idiomatic expression if known."""
     return IDIOMS.get(phrase.lower().strip())
+
+
+# ── R/L Rule ──────────────────────────────────────────────────────────────────
+RL_RULE = (
+    "R/L Rule: In Runyoro-Rutooro, 'R' is the dominant consonant. "
+    "'L' is only used before or after the vowels 'e' or 'i'. "
+    "In all other positions, 'R' is used instead of 'L'."
+)
+
+import re as _re
+
+def apply_rl_rule_to_text(text: str) -> str:
+    """
+    Apply the Runyoro-Rutooro R/L orthography rule to a string.
+    L is only valid adjacent to 'e' or 'i'. Replace all other L with R.
+    """
+    if not text:
+        return text
+
+    result = []
+    chars = list(text)
+    for i, ch in enumerate(chars):
+        if ch not in ('l', 'L'):
+            result.append(ch)
+            continue
+
+        prev_ch = chars[i - 1].lower() if i > 0 else ''
+        next_ch = chars[i + 1].lower() if i < len(chars) - 1 else ''
+
+        # L is valid only when adjacent to e or i
+        if prev_ch in ('e', 'i') or next_ch in ('e', 'i'):
+            result.append(ch)
+        else:
+            # Replace with R, preserving case
+            result.append('R' if ch.isupper() else 'r')
+
+    return ''.join(result)

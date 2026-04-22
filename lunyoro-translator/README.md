@@ -16,7 +16,12 @@ An AI-powered translation system for the Runyoro-Rutooro language of the Bunyoro
 ## Dataset
 
 - ~53,948 English-Lunyoro sentence pairs
-- Sources: crowd-sourced submissions, dictionary entries, sentence corpora
+- Sources:
+  - `english_nyoro_clean.csv` — main sentence pairs with domain tagging
+  - `runyoro_english_sentences_clean.csv` — April crowd-sourced sentence submissions
+  - `rutooro_dictionary_clean.csv` — word/definition/example pairs from the Rutooro dictionary
+  - `word_entries_clean.csv` — dictionary example sentences and word-level definition pairs
+  - `empaako_pairs.csv`, `idioms_pairs.csv`, `numbers_pairs.csv`, `interjections_pairs_clean.csv`, `proverbs_pairs_clean.csv` — small cultural/linguistic extras
 - Augmented via back-translation using the fine-tuned lun2en model
 - Cleaned with quality filters: deduplication, length checks, hallucination detection, round-trip consistency
 
@@ -106,6 +111,10 @@ python fine_tune.py --direction both --epochs 10 --batch_size 32
 
 # 4. Retrain NLLB models
 python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
+
+# 5. (Optional) Evaluate all 4 models on the test set
+python eval_models.py
+# Results saved to eval_results_full.json (BLEU, token F1, exact match)
 ```
 
 ## Publishing Models to HuggingFace
@@ -130,14 +139,20 @@ You can generate a token at https://huggingface.co/settings/tokens (needs write 
 backend/
   main.py                    — FastAPI server
   translate.py               — Translation logic (MarianMT + NLLB + retrieval)
-  language_rules.py          — Grammar rules, idioms, proverbs, empaako
+  language_rules.py          — Grammar rules, idioms, proverbs, empaako, R/L rule (`RL_RULE` constant + `apply_rl_rule_to_text()`)
   prepare_training_data.py   — Corpus builder with domain tagging
   clean_new_submissions.py   — Merges new crowd-sourced submissions
+  clean_sentence_submission.py — Cleans the April sentence submission Excel file (Runyoro-English_Translation.xlsx); standardises columns, strips whitespace, drops empty rows and duplicates, writes data/cleaned/runyoro_english_sentences_clean.csv
   clean_extra.py             — Merges Excel dictionary datasets
+  clean_dictionaries.py      — Cleans and converts Rutooro/Runyoro Excel dictionary files to CSV; normalises column names, strips definition noise (grammar notation, cross-references, OCR-duplicated phrases), deduplicates entries, and writes data/cleaned/rutooro_dictionary_clean.csv
+  audit_csvs.py              — Audits all CSV files in data/: reports row counts, nulls, duplicates, and whether a cleaned version exists
+  check_dups.py              — Checks whether pairs of raw CSV files are identical (e.g. versioned duplicates like word_entries_rows.csv vs word_entries_rows (1).csv)
+  verify_dict.py             — Verifies the cleaned dictionary CSV: prints row count, null counts per column, and sample rows that have both a definition and a Runyoro example sentence
   back_translate.py          — Back-translation augmentation
   clean_backtranslated.py    — Quality filtering for synthetic pairs
   fine_tune.py               — MarianMT fine-tuning
   fine_tune_nllb.py          — NLLB-200 fine-tuning
+  eval_models.py             — Evaluates all 4 models on the test set (BLEU, token F1, exact match)
   download_models.py         — Downloads all models from HuggingFace
   model/
     en2lun/                  — MarianMT English→Lunyoro
