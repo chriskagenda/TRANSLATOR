@@ -1,62 +1,167 @@
-# Lunyoro / Rutooro Translator
+# Lunyoro-Rutooro Translator
 
-AI-powered translation between English and Lunyoro/Rutooro using fine-tuned MarianMT neural models.
+An AI-powered translation system for the Runyoro-Rutooro language of the Bunyoro-Kitara and Tooro kingdoms in Uganda.
 
-## Quick Start (after cloning)
+## Features
 
-> Requires: Python 3.10+, Node.js 18+, Git LFS
-
-### 1. Pull model files (Git LFS)
-```bash
-git lfs pull
-```
-
-### 2. Backend setup
-```bash
-cd lunyoro-translator/backend
-python setup.py
-```
-
-### 3. Start backend
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-### 4. Start frontend (new terminal)
-```bash
-cd lunyoro-translator/frontend
-npm install
-npm run dev
-```
-
-### 5. Open the app
-```
-http://localhost:3002
-```
-
----
-
-## Models
-
-The fine-tuned models are stored in `backend/model/` via Git LFS — no training required after cloning.
-
-| Model | Direction | Epochs | Best val_loss |
-|-------|-----------|--------|---------------|
-| `en2lun` | English → Lunyoro/Rutooro | 10 | 2.12 |
-| `lun2en` | Lunyoro/Rutooro → English | 10 | 2.12 |
-
-## Notes for other machines
-
-- GPU (NVIDIA CUDA): translations run instantly, models load in ~5 seconds on startup
-- CPU only: translations take ~3-5 seconds each, startup takes ~30 seconds — still works fine
-- Git LFS must be installed before cloning, otherwise model files will be empty pointers
-```bash
-python prepare_training_data.py
-python fine_tune.py --direction both --epochs 10 --batch_size 32
-```
+- English ↔ Lunyoro/Rutooro translation (MarianMT + NLLB-200)
+- Dictionary lookup with example sentences
+- AI chat assistant powered by LLaMA 3.2 (via Ollama)
+- PDF/DOCX document summarization and translation
+- Voice translation
+- Spellcheck
+- Domain-aware translation (Medical, Education, Agriculture, etc.)
+- Model comparison view (MarianMT vs NLLB-200)
 
 ## Dataset
 
-- ~53,948 English-Lunyoro sentence pairs after augmentation
-- Sources: `english_nyoro_clean.csv`, `runyoro_english_sentences_clean.csv`, `rutooro_dictionary_clean.csv`, `word_entries_clean.csv`, plus empaako/idioms/numbers/interjections/proverbs CSVs
-- Augmented via back-translation and R/L rule correction
+- ~53,948 English-Lunyoro sentence pairs
+- Sources: crowd-sourced submissions, dictionary entries, sentence corpora
+- Augmented via back-translation using the fine-tuned lun2en model
+- Cleaned with quality filters: deduplication, length checks, hallucination detection, round-trip consistency
+
+## Models
+
+All models are hosted on HuggingFace under [keithtwesigye](https://huggingface.co/keithtwesigye):
+
+| Model | Repo | Description |
+|-------|------|-------------|
+| MarianMT en→lun | `keithtwesigye/lunyoro-en2lun` | English to Lunyoro |
+| MarianMT lun→en | `keithtwesigye/lunyoro-lun2en` | Lunyoro to English |
+| NLLB-200 en→lun | `keithtwesigye/lunyoro-nllb_en2lun` | English to Lunyoro (NLLB) |
+| NLLB-200 lun→en | `keithtwesigye/lunyoro-nllb_lun2en` | Lunyoro to English (NLLB) |
+
+## Requirements
+
+- Python 3.10+
+- Node.js 18+
+- [Ollama](https://ollama.com) (for AI chat)
+
+## Quick Setup
+
+### Linux / macOS
+```bash
+cd lunyoro-translator
+bash setup.sh
+```
+
+### Windows
+```bat
+cd lunyoro-translator
+setup.bat
+```
+
+Or manually:
+
+```bash
+# 1. Python backend
+pip install -r backend/requirements.txt
+
+# 2. Download models from HuggingFace
+cd backend
+python download_models.py
+
+# 3. Frontend
+cd ../frontend && npm install
+
+# 4. Ollama — download from https://ollama.com/download
+ollama pull llama3.2:3b
+```
+
+## Running the App
+
+Open 3 terminals:
+
+```bash
+# Terminal 1 — Backend API (port 8000)
+cd backend
+uvicorn main:app --reload --port 8000
+
+# Terminal 2 — Frontend (port 3002)
+cd frontend
+npm run dev
+
+# Terminal 3 — Ollama (if not running as a service)
+ollama serve
+```
+
+Then open **http://localhost:3002**
+
+## Training
+
+To rebuild training data and retrain models:
+
+```bash
+cd backend
+
+# 1. Merge new submissions and rebuild training splits
+python clean_new_submissions.py
+
+# 2. (Optional) Back-translation augmentation
+python back_translate.py
+python clean_backtranslated.py
+
+# 3. Retrain MarianMT models
+python fine_tune.py --direction both --epochs 10 --batch_size 32
+
+# 4. Retrain NLLB models
+python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
+
+# 5. (Optional) Evaluate all 4 models on the test set
+python eval_models.py
+# Results saved to eval_results_full.json (BLEU, token F1, exact match)
+```
+
+## Publishing Models to HuggingFace
+
+To push README files to the 4 HuggingFace model repos, set your HuggingFace token as an environment variable before running the script:
+
+```bash
+# Linux / macOS
+export HF_TOKEN=your_token_here
+python backend/_push_hf_readmes.py
+
+# Windows
+set HF_TOKEN=your_token_here
+python backend\_push_hf_readmes.py
+```
+
+You can generate a token at https://huggingface.co/settings/tokens (needs write access to the target repos).
+
+## Architecture
+
+```
+backend/
+  main.py                    — FastAPI server
+  translate.py               — Translation logic (MarianMT + NLLB + retrieval)
+  language_rules.py          — Grammar rules, idioms, proverbs, empaako
+  prepare_training_data.py   — Corpus builder with domain tagging
+  clean_new_submissions.py   — Merges new crowd-sourced submissions
+  clean_extra.py             — Merges Excel dictionary datasets
+  back_translate.py          — Back-translation augmentation
+  clean_backtranslated.py    — Quality filtering for synthetic pairs
+  fine_tune.py               — MarianMT fine-tuning
+  fine_tune_nllb.py          — NLLB-200 fine-tuning
+  eval_models.py             — Evaluates all 4 models on the test set (BLEU, token F1, exact match)
+  download_models.py         — Downloads all models from HuggingFace
+  model/
+    en2lun/                  — MarianMT English→Lunyoro
+    lun2en/                  — MarianMT Lunyoro→English
+    nllb_en2lun/             — NLLB-200 English→Lunyoro
+    nllb_lun2en/             — NLLB-200 Lunyoro→English
+    sem_model/               — Sentence transformer for semantic search
+
+frontend/
+  components/
+    Translator.tsx           — Main translation UI
+    Dictionary.tsx           — Dictionary lookup
+    ChatPage.tsx             — AI chat assistant
+    PdfTranslator.tsx        — Document summarization
+    VoiceTranslator.tsx      — Voice input/output
+    History.tsx              — Translation history
+```
+
+## Chat (LLM)
+
+The chat assistant uses **LLaMA 3.2 3B** running locally via Ollama. It generates responses in English, which are then translated to Runyoro-Rutooro by the fine-tuned MarianMT model. No internet connection required after setup.
+
