@@ -39,7 +39,7 @@
     "LABEL_1": 1,
     "LABEL_2": 2
   },
-  "label_smoothing_factor": 0.1,
+  "label_smoothing_factor": 0.2,
   "max_position_embeddings": 512,
   "model_type": "marian",
   "normalize_before": false,

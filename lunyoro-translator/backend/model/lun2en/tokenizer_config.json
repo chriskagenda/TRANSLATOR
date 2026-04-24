@@ -27,7 +27,7 @@
   },
   "backend": "custom",
   "eos_token": "</s>",
-  "is_local": false,
+  "is_local": true,
   "model_max_length": 512,
   "pad_token": "<pad>",
   "separate_vocabs": false,

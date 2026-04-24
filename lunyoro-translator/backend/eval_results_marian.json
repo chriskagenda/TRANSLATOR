@@ -1,0 +1,18 @@
+[
+  {
+    "model": "MarianMT en2lun",
+    "samples": 3788,
+    "bleu": 22.16,
+    "token_f1": 35.84,
+    "exact_match_pct": 1.74,
+    "ms_per_sample": 31.2
+  },
+  {
+    "model": "MarianMT lun2en",
+    "samples": 3788,
+    "bleu": 37.84,
+    "token_f1": 63.53,
+    "exact_match_pct": 11.56,
+    "ms_per_sample": 74.6
+  }
+]

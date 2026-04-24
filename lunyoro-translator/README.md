@@ -102,9 +102,27 @@ cd backend
 # 1. Merge new submissions and rebuild training splits
 python clean_new_submissions.py
 
+# (Alternative) Clean and merge previously unprocessed raw files
+# (word_submissions_rows, word_entries_rows_root, sentence_submissions_rows)
+# then rebuild training splits
+python clean_unprocessed_raw.py
+
 # 2. (Optional) Back-translation augmentation
 python back_translate.py
 python clean_backtranslated.py
+
+# (Alternative) Full improvement pipeline in one shot:
+# back-translates sentence_submissions, quality-filters, rebuilds splits,
+# then fine-tunes both MarianMT (15 epochs, LR=2e-5) and NLLB (8 epochs, label_smoothing=0.2) from existing checkpoints,
+# NLLB uses DDP across multiple GPUs if available (gloo backend for Windows compatibility),
+# then pushes all 4 models + updated dataset to HuggingFace and commits/pushes to GitHub
+python improve_and_retrain.py
+
+# Skip data preparation steps (back-translation, filtering, splits) and go straight to fine-tuning:
+python improve_and_retrain.py --skip-data
+
+# Skip training entirely — only push existing models and dataset to HuggingFace:
+python improve_and_retrain.py --skip-train
 
 # 3. Retrain MarianMT models
 python fine_tune.py --direction both --epochs 10 --batch_size 32
@@ -113,8 +131,24 @@ python fine_tune.py --direction both --epochs 10 --batch_size 32
 python fine_tune_nllb.py --direction both --epochs 10 --batch_size 4
 
 # 5. (Optional) Evaluate all 4 models on the test set
+# Single-process (any hardware):
 python eval_models.py
 # Results saved to eval_results_full.json (BLEU, token F1, exact match)
+
+# Sequential single-GPU evaluation (auto-selects GPU with most free memory):
+# Useful when Ollama or another process occupies a GPU — avoids hardcoded cuda:0/cuda:1
+python run_eval.py
+# Results saved to eval_results_all.json (BLEU, token F1, exact match, ms/sample)
+
+# MarianMT-only evaluation (runs on CPU, leaving both GPUs free for NLLB training):
+# Useful for a quick check of just the two MarianMT models
+python eval_marian.py
+# Results saved to eval_marian_results.json (BLEU, token F1, exact match)
+
+# Multi-GPU parallel evaluation (requires 2 GPUs):
+# GPU 0 runs MarianMT en2lun + lun2en; GPU 1 runs NLLB en2lun + lun2en simultaneously
+python eval_all_parallel.py
+# Results saved to eval_results_all.json (BLEU, token F1, exact match, ms/sample)
 ```
 
 ## Publishing Models to HuggingFace
@@ -142,6 +176,7 @@ backend/
   language_rules.py          — Grammar rules, idioms, proverbs, empaako, R/L rule (`RL_RULE` constant + `apply_rl_rule_to_text()`)
   prepare_training_data.py   — Corpus builder with domain tagging
   clean_new_submissions.py   — Merges new crowd-sourced submissions
+  clean_unprocessed_raw.py   — Cleans and merges previously unprocessed raw files (word_submissions_rows, word_entries_rows_root, sentence_submissions_rows) into english_nyoro_clean.csv and word_entries_clean.csv, then rebuilds train/val/test splits
   clean_sentence_submission.py — Cleans the April sentence submission Excel file (Runyoro-English_Translation.xlsx); standardises columns, strips whitespace, drops empty rows and duplicates, writes data/cleaned/runyoro_english_sentences_clean.csv
   clean_extra.py             — Merges Excel dictionary datasets
   clean_dictionaries.py      — Cleans and converts Rutooro/Runyoro Excel dictionary files to CSV; normalises column names, strips definition noise (grammar notation, cross-references, OCR-duplicated phrases), deduplicates entries, and writes data/cleaned/rutooro_dictionary_clean.csv
@@ -150,9 +185,13 @@ backend/
   verify_dict.py             — Verifies the cleaned dictionary CSV: prints row count, null counts per column, and sample rows that have both a definition and a Runyoro example sentence
   back_translate.py          — Back-translation augmentation
   clean_backtranslated.py    — Quality filtering for synthetic pairs
+  improve_and_retrain.py     — Full improvement pipeline: back-translates sentence_submissions, quality-filters synthetic pairs, rebuilds training splits, fine-tunes MarianMT (15 epochs, LR=2e-5, label_smoothing=0.2) and NLLB (8 epochs, label_smoothing=0.2) from existing checkpoints, then pushes all 4 models + updated dataset to HuggingFace and commits/pushes code and data to GitHub. NLLB training uses DistributedDataParallel (DDP) via torchrun when 2+ GPUs are available (gloo backend, compatible with Windows); falls back to single-GPU automatically. Pass --skip-data to skip steps 1-3; pass --skip-train to skip training and only push existing models to HuggingFace
   fine_tune.py               — MarianMT fine-tuning
   fine_tune_nllb.py          — NLLB-200 fine-tuning
   eval_models.py             — Evaluates all 4 models on the test set (BLEU, token F1, exact match)
+  eval_marian.py             — MarianMT-only evaluation: runs on CPU, leaving both GPUs free for concurrent NLLB training; outputs eval_marian_results.json (BLEU, token F1, exact match)
+  run_eval.py                — Sequential single-GPU evaluation: auto-selects the GPU with the most free memory (avoids conflicts with Ollama); outputs eval_results_all.json
+  eval_all_parallel.py       — Evaluates all 4 models in parallel across 2 GPUs (GPU 0: MarianMT, GPU 1: NLLB); outputs eval_results_all.json
   download_models.py         — Downloads all models from HuggingFace
   model/
     en2lun/                  — MarianMT English→Lunyoro

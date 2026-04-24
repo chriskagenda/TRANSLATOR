@@ -1,0 +1,18 @@
+[
+  {
+    "model": "NLLB nllb_en2lun",
+    "samples": 3788,
+    "bleu": 21.09,
+    "token_f1": 33.53,
+    "exact_match_pct": 2.24,
+    "ms_per_sample": 74.3
+  },
+  {
+    "model": "NLLB nllb_lun2en",
+    "samples": 3788,
+    "bleu": 28.03,
+    "token_f1": 50.05,
+    "exact_match_pct": 0.66,
+    "ms_per_sample": 93.0
+  }
+]
