@@ -152,7 +152,7 @@ def _mt_translate(text: str, direction: str, context: str = "") -> str | None:
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
-            num_beams=4,
+            num_beams=8,
             max_length=512,
             early_stopping=True,
             no_repeat_ngram_size=3,
@@ -230,7 +230,7 @@ def _nllb_translate(text: str, direction: str, context: str = "") -> str | None:
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=256).to(device)
 
     generate_kwargs: dict = dict(
-        num_beams=4,
+        num_beams=8,
         max_length=512,
         early_stopping=True,
         no_repeat_ngram_size=3,

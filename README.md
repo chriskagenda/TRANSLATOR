@@ -138,6 +138,8 @@ backend/
   prepare_training_data.py   — Corpus builder with domain tagging
   clean_new_submissions.py   — Merges new crowd-sourced submissions
   clean_extra.py             — Merges Excel dictionary datasets
+  clean_remaining_raw.py     — Extracts translation pairs from remaining raw CSVs (word_submissions_rows*.csv, corpus_sentences_rows (1).csv); merges new pairs into english_nyoro_clean.csv after deduplication
+  inspect_raw.py             — Inspects raw CSV files: prints row counts, column names, null counts, and sample rows
   back_translate.py          — Back-translation augmentation
   clean_backtranslated.py    — Quality filtering for synthetic pairs
   fine_tune.py               — MarianMT fine-tuning

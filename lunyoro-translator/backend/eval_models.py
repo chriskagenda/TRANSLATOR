@@ -33,7 +33,7 @@ def batch_translate_marian(texts, model, tokenizer, max_len=256):
     inputs = tokenizer(texts, return_tensors="pt", padding=True,
                        truncation=True, max_length=max_len).to(DEVICE)
     with torch.no_grad():
-        out = model.generate(**inputs, num_beams=4, max_length=max_len)
+        out = model.generate(**inputs, num_beams=8, max_length=max_len)
     return [tokenizer.decode(o, skip_special_tokens=True) for o in out]
 
 
@@ -44,7 +44,7 @@ def batch_translate_nllb(texts, model, tokenizer, src_lang, tgt_lang, max_len=25
     tgt_id = tokenizer.convert_tokens_to_ids(tgt_lang)
     with torch.no_grad():
         out = model.generate(**inputs, forced_bos_token_id=tgt_id,
-                             num_beams=4, max_length=max_len)
+                             num_beams=8, max_length=max_len)
     return [tokenizer.decode(o, skip_special_tokens=True) for o in out]
 
 
