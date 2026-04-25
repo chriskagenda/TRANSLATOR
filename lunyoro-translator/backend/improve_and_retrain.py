@@ -9,7 +9,11 @@ Full improvement pipeline:
 Run:
     python improve_and_retrain.py
 """
-import os, re, time
+import os, re, time, sys
+# Ensure all print() calls flush immediately — no buffering
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
 import pandas as pd
 import torch
 from pathlib import Path
@@ -466,7 +470,7 @@ def _nllb_single_gpu():
                 best_val=v_loss; mdl.save_pretrained(ckpt); tok.save_pretrained(ckpt)
                 print(f"  ✓ Saved (val={v_loss:.4f})", flush=True)
         del mdl; torch.cuda.empty_cache()
-        print(f"  Done. Best val_loss={best_val:.4f}")
+        print(f"  Done. Best val_loss={best_val:.4f}", flush=True)
 
     train_df = pd.read_csv(OUT_DIR / "train.csv").fillna("")
     val_df   = pd.read_csv(OUT_DIR / "val.csv").fillna("")
@@ -524,17 +528,17 @@ def _nllb_single_gpu():
                     batch = {k: v.to(DEVICE) for k, v in batch.items()}
                     v_loss += mdl(**batch).loss.mean().item()
             v_loss /= len(val_loader)
-            print(f"  Epoch {epoch}/{EPOCHS}  train={t_loss:.4f}  val={v_loss:.4f}")
+            print(f"  Epoch {epoch}/{EPOCHS}  train={t_loss:.4f}  val={v_loss:.4f}", flush=True)
 
             if v_loss < best_val:
                 best_val = v_loss
                 raw_mdl = mdl.module if isinstance(mdl, torch.nn.DataParallel) else mdl
                 raw_mdl.save_pretrained(ckpt)
                 tok.save_pretrained(ckpt)
-                print(f"  ✓ Saved (val={v_loss:.4f})")
+                print(f"  ✓ Saved (val={v_loss:.4f})", flush=True)
 
         del mdl; torch.cuda.empty_cache()
-        print(f"  Done. Best val_loss={best_val:.4f}")
+        print(f"  Done. Best val_loss={best_val:.4f}", flush=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -646,6 +650,9 @@ def step7_push_to_git():
 
 
 if __name__ == "__main__":
+    # Force unbuffered output so epoch logs appear immediately
+    sys.stdout.reconfigure(line_buffering=True)
+
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-data", action="store_true",
