@@ -139,6 +139,7 @@ backend/
   clean_new_submissions.py   — Merges new crowd-sourced submissions
   clean_extra.py             — Merges Excel dictionary datasets
   clean_remaining_raw.py     — Extracts translation pairs from remaining raw CSVs (word_submissions_rows*.csv, corpus_sentences_rows (1).csv); merges new pairs into english_nyoro_clean.csv after deduplication
+  extract_ocr_pairs.py       — Extracts English ↔ Runyoro-Rutooro sentence pairs from OCR grammar data and merges them into english_nyoro_clean.csv; outputs data/cleaned/ocr_pairs_extracted.csv for review; run directly with `python extract_ocr_pairs.py`
   inspect_raw.py             — Inspects raw CSV files: prints row counts, column names, null counts, and sample rows
   back_translate.py          — Back-translation augmentation
   clean_backtranslated.py    — Quality filtering for synthetic pairs
